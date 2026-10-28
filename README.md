@@ -20,6 +20,18 @@ bridge needs no plugin, database, network listener or separate API key.
 
 ## Quick start
 
+To create a vault for a new project in an empty or missing folder, build the CLI
+with `make build`, then run:
+
+```sh
+./.bin/vault-bridge vault init --path /absolute/path/to/MyVault \
+  --id my-project --title "My Project"
+```
+
+This adds the project's planning notes under `03-Projects/my-project`, a dashboard,
+and reusable templates. Template sources are kept in [`templates/`](templates/README.md).
+Follow the [setup guide](docs/setup.md#step-by-step-setup) to connect your agent.
+
 Use this path when your project's notes already exist under
 `<vault>/03-Projects/my-project`. For a new vault or project, follow the
 [full setup guide](docs/setup.md#step-by-step-setup), which includes initialization.

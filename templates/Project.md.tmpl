@@ -3,7 +3,7 @@ type: "project"
 project: {{quote .ID}}
 status: "planning"
 priority: "medium"
-language: ["go"]
+language: {{if eq .ID "vault-bridge"}}["go"]{{else}}[]{{end}}
 repository: ""
 created: {{quote .Date}}
 updated: {{quote .Date}}

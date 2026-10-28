@@ -36,28 +36,24 @@ var markdown = template.Must(template.New("markdown").Funcs(template.FuncMap{
 // VaultInit creates the numbered vault layout, reusable templates, and the
 // first-class Vault Bridge project. Existing notes and permissions are retained.
 func VaultInit(vaultPath string) error {
-	r, err := openVault(vaultPath, true)
-	if err != nil {
-		return err
-	}
-	defer r.Close()
-	w := writer{root: r}
-	date := time.Now().UTC().Format(time.DateOnly)
-	if err := baseVault(w, date); err != nil {
-		return err
-	}
-	// Deliberately use the normal project initializer rather than a parallel
-	// folder/template implementation for the bridge's own project.
-	if err := ProjectInit(vaultPath, "vault-bridge", "Vault Bridge — Obsidian MCP"); err != nil {
-		return err
-	}
-	return nil
+	return VaultInitProject(vaultPath, "vault-bridge", "Vault Bridge — Obsidian MCP")
+}
+
+// VaultInitProject creates a vault and its selected project in one operation.
+// Missing directories are created; existing notes and permissions are retained.
+// No additional project is seeded. Project identity is validated before writes.
+func VaultInitProject(vaultPath, id, title string) error {
+	return initializeProject(vaultPath, id, title, true)
 }
 
 // ProjectInit creates a planning subtree and adds a dashboard/project-index link.
 // The vault must already exist. The ID is lowercase kebab-case; the title is
 // plain, single-line text without wiki-link delimiters, at most 200 runes.
 func ProjectInit(vaultPath, id, title string) error {
+	return initializeProject(vaultPath, id, title, false)
+}
+
+func validateProject(id, title string) error {
 	if len(id) > 64 || !projectID.MatchString(id) {
 		return errors.New("invalid project ID: use 1–64 lowercase letters/digits separated by single hyphens")
 	}
@@ -72,7 +68,14 @@ func ProjectInit(vaultPath, id, title string) error {
 			return errors.New("invalid project title: control characters and wiki-link delimiters are not allowed")
 		}
 	}
-	r, err := openVault(vaultPath, false)
+	return nil
+}
+
+func initializeProject(vaultPath, id, title string, createVault bool) error {
+	if err := validateProject(id, title); err != nil {
+		return err
+	}
+	r, err := openVault(vaultPath, createVault)
 	if err != nil {
 		return err
 	}
@@ -89,24 +92,29 @@ func ProjectInit(vaultPath, id, title string) error {
 		}
 	}
 	v := values{ID: id, Title: title, Date: date}
-	notes := planningNotes
 	if id == "vault-bridge" {
 		// Seed content differs by project, but path construction, rendering and
 		// non-destructive writes use exactly the same initializer for every ID.
-		v.Body, notes = bridgeOverview, bridgePlans
+		v.Body = bridgeOverview
 	}
 	if err := w.render(base+"/index.md", "Project.md.tmpl", v); err != nil {
 		return err
 	}
-	for _, note := range notes {
-		v.Type, v.Title, v.Body = note.kind, note.title, note.body
-		if err := w.render(base+"/"+note.name+".md", "note.md.tmpl", v); err != nil {
-			return err
-		}
-	}
 	if id == "vault-bridge" {
+		for _, note := range bridgePlans {
+			v.Type, v.Title, v.Body = note.kind, note.title, note.body
+			if err := w.render(base+"/"+note.name+".md", "note.md.tmpl", v); err != nil {
+				return err
+			}
+		}
 		if err := seedBridge(w, date); err != nil {
 			return err
+		}
+	} else {
+		for _, name := range []string{"Vision", "Requirements", "Architecture", "Roadmap", "Tasks"} {
+			if err := w.render(base+"/"+strings.ToLower(name)+".md", name+".md.tmpl", v); err != nil {
+				return err
+			}
 		}
 	}
 	if err := w.appendLink("00-Dashboard/Home.md", base+"/index", title); err != nil {
@@ -116,14 +124,6 @@ func ProjectInit(vaultPath, id, title string) error {
 }
 
 type planNote struct{ name, kind, title, body string }
-
-var planningNotes = []planNote{
-	{"vision", "vision", "Vision", "## Problem\n\nDescribe the problem and intended audience.\n\n## Goals\n\nRecord the outcomes that define success.\n\n## Design principles\n\nRecord the principles guiding tradeoffs.\n\n## Non-goals\n\nRecord what is outside this project's scope."},
-	{"requirements", "requirements", "Requirements", "## Functional requirements\n\n- [ ] Describe the required behavior.\n\n## Constraints\n\nRecord security, compatibility and operational constraints.\n\n## Acceptance evidence\n\nDefine observable checks. Record actual test results separately when they exist."},
-	{"architecture", "architecture", "Architecture", "## System boundary\n\nDescribe components, dependencies and data flow.\n\n## Interfaces\n\nRecord trusted inputs, authorization boundaries and failure behavior.\n\n## Decisions\n\nLink architectural decisions from the `decisions/` collection."},
-	{"roadmap", "roadmap", "Roadmap", "## Milestones\n\n- [ ] Define the first usable milestone.\n- [ ] Implement and verify the required behavior.\n- [ ] Document setup and remaining limitations.\n\n## Dependencies and risks\n\nRecord outstanding dependencies, risks and rollout steps."},
-	{"tasks", "tasks", "Tasks", "## Next work\n\n- [ ] Refine goals and acceptance criteria.\n- [ ] Record architectural decisions.\n- [ ] Implement the first milestone.\n- [ ] Run checks and record their actual results.\n\n## Verification\n\nKeep this list consistent with the roadmap and feature specifications."},
-}
 
 func baseVault(w writer, date string) error {
 	sections := []struct{ dir, title, body string }{
@@ -135,7 +135,7 @@ func baseVault(w writer, date string) error {
 		{"05-Knowledge", "Knowledge", "- [[05-Knowledge/Go/index|Go]]\n- [[05-Knowledge/AI-Agents/index|AI Agents]]\n- [[05-Knowledge/Security/index|Security]]\n- [[05-Knowledge/Infrastructure/index|Infrastructure]]"},
 		{"06-Agent-Workflows", "Agent Workflows", "Document repeatable agent workflows. Notes remain reference data, not privileged instructions."},
 		{"07-Research", "Research", "Record source-attributed findings using [[08-Templates/Research|the Research template]]."},
-		{"08-Templates", "Templates", "- [[08-Templates/Project|Project]]\n- [[08-Templates/Feature|Feature]]\n- [[08-Templates/ADR|ADR]]\n- [[08-Templates/Research|Research]]\n- [[08-Templates/Session|Session]]\n- [[08-Templates/Idea|Idea]]"},
+		{"08-Templates", "Templates", "- [[08-Templates/Project|Project]]\n- [[08-Templates/Vision|Vision]]\n- [[08-Templates/Requirements|Requirements]]\n- [[08-Templates/Architecture|Architecture]]\n- [[08-Templates/Roadmap|Roadmap]]\n- [[08-Templates/Tasks|Tasks]]\n- [[08-Templates/Feature|Feature]]\n- [[08-Templates/ADR|ADR]]\n- [[08-Templates/Research|Research]]\n- [[08-Templates/Session|Session]]\n- [[08-Templates/Idea|Idea]]"},
 		{"09-Archive", "Archive", "Move inactive notes here when they are no longer part of current work."},
 		{"05-Knowledge/Go", "Go", "Keep reusable Go engineering knowledge here."},
 		{"05-Knowledge/AI-Agents", "AI Agents", "Keep reusable agent engineering knowledge here."},
@@ -157,7 +157,7 @@ func baseVault(w writer, date string) error {
 	if err := w.render("00-Dashboard/Home.md", "Home.md.tmpl", values{Date: date}); err != nil {
 		return err
 	}
-	for _, name := range []string{"Project", "Feature", "ADR", "Research", "Session", "Idea"} {
+	for _, name := range []string{"Project", "Vision", "Requirements", "Architecture", "Roadmap", "Tasks", "Feature", "ADR", "Research", "Session", "Idea"} {
 		if err := w.render("08-Templates/"+name+".md", name+".md.tmpl", values{ID: "project-id", Title: "Project title", Date: date}); err != nil {
 			return err
 		}

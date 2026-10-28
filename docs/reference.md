@@ -20,7 +20,7 @@ path instead of the checkout's local binary.
 
 | Command | Meaning | Example arguments |
 | --- | --- | --- |
-| `vault init` | Creates the vault structure, templates, dashboard, and Vault Bridge planning project. Preserves existing notes. | `--path ../DevVault` |
+| `vault init` | Creates the vault structure, templates, dashboard, and selected project. Preserves existing notes. Omit both project flags to seed Vault Bridge. | `--path ../DevVault --id my-app --title "My App"` |
 | `project init` | Adds a project's planning documents and dashboard link to an existing vault. | `--vault ../DevVault --id my-app --title "My App"` |
 | `config check` | Validates the project folder, access scope, and limits without starting the server. | `--target ../DevVault/03-Projects/my-app` |
 | `install` | Registers `devvault` in project or global settings; add `--allow-writes` to enable two write tools alongside six read tools. | `/path/to/code --client codex --target ../DevVault/03-Projects/my-app` |
@@ -52,8 +52,17 @@ can create its own `.obsidian` settings; Vault Bridge does not manage them.
 
 The numbered sections include Inbox, Ideas, Projects, Architecture, Knowledge,
 Agent Workflows, Research, Templates and Archive, plus `assets/`. Knowledge has
-Go, AI-Agents, Security and Infrastructure subfolders. Six reusable templates
-cover Project, Feature, ADR, Research, Session and Idea notes.
+Go, AI-Agents, Security and Infrastructure subfolders. Eleven reusable templates
+cover Project, Vision, Requirements, Architecture, Roadmap, Tasks, Feature, ADR,
+Research, Session and Idea notes. Their [embedded sources](../templates/README.md)
+live in `templates/` in this repository.
+
+`vault init --path <folder> --id <id> --title <title>` accepts an empty or missing
+folder and initializes the chosen project in one command. Both project flags
+must be supplied together. It creates no additional Vault Bridge project when
+you choose another ID. The original `vault init --path <folder>` command still
+seeds Vault Bridge. Both forms can extend an existing vault without overwriting
+notes.
 
 Every project gets `index.md`, `vision.md`, `requirements.md`, `architecture.md`,
 `roadmap.md`, `tasks.md`, and `features/`, `decisions/`, `research/`, `sessions/`.

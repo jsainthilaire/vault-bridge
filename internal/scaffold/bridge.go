@@ -122,7 +122,7 @@ var bridgeNotes = []planNote{
 	{"features/vault-scaffolding", "feature", "Vault scaffolding", `## Problem and requirements
 
 Create a usable numbered vault and consistent project planning notes while
-preserving authored material. Keep six templates and a Markdown dashboard usable
+preserving authored material. Keep reusable templates and a Markdown dashboard usable
 without community plugins. Create Vault Bridge through the normal initializer.
 
 ## Acceptance criteria

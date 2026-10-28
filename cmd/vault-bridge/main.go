@@ -24,6 +24,7 @@ const usage = `Vault Bridge — local project knowledge over scoped MCP
 
 Usage:
   vault-bridge vault init --path <vault>
+  vault-bridge vault init --path <vault> --id <id> --title <title>
   vault-bridge project init --vault <vault> --id <id> --title <title>
   vault-bridge config check --config <absolute-config.yaml> --project <id>
   vault-bridge config check --target <vault/03-Projects/project-folder>
@@ -36,6 +37,7 @@ Usage:
   vault-bridge --version
 
 Initialization adds missing files and links and preserves authored notes.
+Use vault init --id and --title to create a vault for your chosen project.
 Serve binds exactly one configured project. Shared knowledge requires explicit grants.
 Serving is read-only unless --allow-writes enables project Markdown creation and revision-checked updates.
 Configuration and vault_root must use absolute paths; ~ and variables are not expanded.
@@ -91,6 +93,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	switch command {
 	case "vault init":
 		f.StringVar(&vaultPath, "path", "", "Vault directory to create or extend (required)")
+		f.StringVar(&projectID, "id", "", "Selected project ID (requires --title; defaults to vault-bridge when both omitted)")
+		f.StringVar(&title, "title", "", "Selected project title (requires --id)")
 	case "project init":
 		f.StringVar(&vaultPath, "vault", "", "Existing vault directory (required)")
 		f.StringVar(&projectID, "id", "", "Stable lowercase-kebab-case project ID (required)")
@@ -147,10 +151,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if vaultPath == "" {
 			return errors.New("--path is required")
 		}
-		if err := scaffold.VaultInit(vaultPath); err != nil {
+		selectedProject := false
+		f.Visit(func(option *flag.Flag) {
+			selectedProject = selectedProject || option.Name == "id" || option.Name == "title"
+		})
+		var err error
+		if selectedProject {
+			if projectID == "" || title == "" {
+				return errors.New("--id and --title must both be provided and nonempty")
+			}
+			err = scaffold.VaultInitProject(vaultPath, projectID, title)
+		} else {
+			err = scaffold.VaultInit(vaultPath)
+		}
+		if err != nil {
 			return err
 		}
-		_, err := fmt.Fprintln(stdout, "Vault initialized; existing notes preserved.")
+		_, err = fmt.Fprintln(stdout, "Vault initialized; existing notes preserved.")
 		return err
 	case "project init":
 		if vaultPath == "" || projectID == "" || title == "" {

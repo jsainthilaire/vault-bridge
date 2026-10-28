@@ -78,14 +78,26 @@ Skip this step if the vault and your selected project notes already exist.
 Otherwise:
 
 ```sh
-"$BRIDGE_PATH" vault init --path "$VAULT_PATH"
-"$BRIDGE_PATH" project init --vault "$VAULT_PATH" \
+"$BRIDGE_PATH" vault init --path "$VAULT_PATH" \
   --id "$PROJECT_ID" --title "$PROJECT_TITLE"
 ```
 
-Initialization adds missing files and preserves authored notes. `vault init`
-also creates the bridge's own `vault-bridge` planning project. `project init`
-creates the selected project's planning notes and dashboard link.
+This creates the vault in an empty or missing folder, adds the selected project's
+planning notes under `03-Projects/$PROJECT_ID`, and links it from the dashboard.
+It also installs reusable Markdown templates in `08-Templates/`. Initialization
+adds missing files and preserves authored notes, so you can rerun the command.
+
+To add another project to an existing vault, use:
+
+```sh
+"$BRIDGE_PATH" project init --vault "$VAULT_PATH" \
+  --id another-project --title "Another Project"
+```
+
+For `vault init`, supply both `--id` and `--title`, or omit both to keep the
+original behavior of creating the bridge's own `vault-bridge` planning project.
+The [template sources](../templates/README.md) live in this repository and are
+embedded in the executable; rebuild after editing them.
 
 In Obsidian, open `VAULT_PATH` as a vault, open `00-Dashboard/Home.md`, and follow
 your project's link. Fill in its overview, requirements, and architecture. Use
