@@ -6,8 +6,9 @@ cover macOS and Linux, with read-only access as the starting point.
 - [Build, initialize, install, and verify](#step-by-step-setup)
 - [Existing connections](#existing-connections)
 - [Global installation](#global-installation)
+- [Install every project globally](#install-every-project-globally)
 - [Enable project writes](#enable-project-writes-and-update-milestones)
-- [Server lifecycle](#where-to-run-the-server)
+- [Automatic server startup](#where-to-run-the-server)
 - [Manual Codex configuration](#connect-codex)
 - [Manual Claude Code configuration](#claude-code)
 - [Agent instructions to copy](#agent-knowledge-workflow)
@@ -246,6 +247,47 @@ Existing project settings can override a global entry with the same server name;
 restart the client, inspect `/mcp`, and call `project_context` to confirm the
 active project.
 
+## Install every project globally
+
+Point the installer at the vault's projects directory to register every project
+in one command. This mode requires `--global`; no previous global installation
+is needed:
+
+```sh
+"$BRIDGE_PATH" install --global --client codex \
+  --projects-dir "$VAULT_PATH/03-Projects"
+
+# Or use Claude Code:
+"$BRIDGE_PATH" install --global --client claude \
+  --projects-dir "$VAULT_PATH/03-Projects"
+```
+
+The installer visits immediate, non-hidden child folders in name order and
+registers each as `devvault-<folder-name>`, for example `devvault-my-app`. Each
+folder name must be a lowercase kebab-case project ID, at most 64 bytes. Regular
+files such as `index.md` and dot-prefixed entries are ignored; nested project
+discovery is not performed. Non-hidden symlinks, special files, invalid project
+folders, an empty project set, or more than 1024 directory entries fail setup.
+
+All project folders and client entries are checked before one atomic settings
+write. If any project or existing entry conflicts, the client configuration is
+left unchanged. Rerunning the same command preserves matching entries and adds
+new projects. Entries for removed folders are retained; remove those entries
+manually when desired. Existing `devvault` and unrelated servers are preserved.
+Conflicting entries require manual editing or removal before retrying.
+
+Use `--projects-dir` without `--target`, `--config`, `--project`, a code repository
+path, or `--repo`. Add `--allow-writes` to enable writes for every connection in
+the batch. These direct targets use default limits and grant no shared access.
+The command registers connections and preserves vault notes and instructions.
+
+Start a new client session and inspect the `devvault-<id>` servers in `/mcp`.
+**Every registered project is available in every repository.** Each server stays
+bound to its own project; the client can use the tools from all registered
+servers. This mode does not select a project from the working directory. Use
+project-local installation when each repository should receive only its own
+connection.
+
 ## Enable project writes and update milestones
 
 Add `--allow-writes` when installing a connection to let the agent create and
@@ -321,11 +363,67 @@ writes, then verify the enabled tools in `/mcp` in a new client session.
 
 ## Where to run the server
 
-With an installed connection, Codex or Claude launches and owns its own
-`serve` process. You do not need a separate server terminal. Start the client
-from the **code repository**, not the vault.
+Start Codex or Claude Code from your **code repository** after installing the
+connection. The application includes the MCP client: it starts the saved
+Vault Bridge executable with `serve`, opens the stdio connection and discovers
+the available tools. You do not install or start another MCP client separately.
 
-For a manual stdio launch using the paths from setup step 2:
+The client finds the launch command in the configuration that `install` wrote:
+
+| Client | Project-local installation | Global installation | Server entry |
+| --- | --- | --- | --- |
+| Codex | `<code-repo>/.codex/config.toml` | `~/.codex/config.toml` by default | `[mcp_servers.devvault]`, or `[mcp_servers.devvault-<id>]` for bulk setup |
+| Claude Code | `<code-repo>/.mcp.json` | `~/.claude.json` by default | `mcpServers.devvault`, or `mcpServers.devvault-<id>` for bulk setup |
+
+See [global configuration overrides](#global-installation) if you use a custom
+configuration directory. Codex loads repository configuration for trusted
+projects. Claude Code may require approval of servers from `.mcp.json` before
+connecting. These behaviors are documented in the official
+[Codex MCP guide](https://learn.chatgpt.com/docs/extend/mcp) and
+[Claude Code MCP guide](https://code.claude.com/docs/en/mcp#project-server-approvals-and-workspace-trust).
+
+The normal sequence is:
+
+1. Run `vault-bridge install` once for each client you use. This saves the launch
+   settings and exits; it does not start a persistent service.
+2. Start a new `codex` or `claude` session. Complete applicable trust and server
+   approval prompts. The client launches each enabled connection with its saved
+   executable and project arguments.
+3. The bridge validates its project scope. The client performs the MCP handshake
+   and obtains the tool descriptions and argument schemas.
+4. Ask for project context or a specific note. The agent chooses the tool, the
+   client sends the call, and the bridge returns the authorized content.
+5. The client manages the child process for the connection's lifetime. Start a
+   new session after changing saved arguments or rebuilding the executable.
+
+See the [startup sequence diagram](how-it-works.md#automatic-startup-and-tool-discovery)
+for the protocol messages. Automatic startup does not automatically read all
+notes or guarantee that the agent consults them for every request. Add the
+[agent workflow](#agent-knowledge-workflow) and verify a real tool call.
+
+| Check | Codex | Claude Code |
+| --- | --- | --- |
+| Inspect configured connections from a terminal | `codex mcp list` | `claude mcp list` |
+| Inspect a single-project entry | `codex mcp get devvault` | `claude mcp get devvault` |
+| Inspect a bulk entry for project `my-app` | `codex mcp get devvault-my-app` | `claude mcp get devvault-my-app` |
+| Inspect connections inside the conversation | `/mcp` | `/mcp` |
+
+Use the actual saved server name. For a bulk connection, a verification prompt is:
+
+```text
+Use the devvault-my-app MCP server. Call project_context, confirm the returned
+project is my-app, and read 03-Projects/my-app/index.md. Report the actual source
+path and result.
+```
+
+These client inspection commands are separate from `vault-bridge` commands.
+Successful retrieval verifies the session you are using; writing a config file
+or passing an SDK test alone does not. If startup fails, check the executable
+and target paths, trust/approval state and client diagnostics; see
+[Troubleshooting](troubleshooting.md).
+
+For a manual stdio launch using the paths from setup step 2 (usually only needed
+for protocol diagnostics):
 
 ```sh
 "$BRIDGE_PATH" serve --target "$VAULT_PATH/03-Projects/$PROJECT_ID"
@@ -495,6 +593,12 @@ This repository uses DevVault project `my-project` through the `devvault` MCP se
   have applied them.
 ```
 
+For bulk global setup, replace `devvault` in the block with the corresponding
+`devvault-my-project` server name. Add an explicit instruction to verify that
+`project_context` returns `my-project` before reading or updating notes. The
+global entries remain available for all projects; repository instructions guide
+selection without changing the access granted by those entries.
+
 Start a new agent session after updating instructions. MCP configuration makes
 the tools available; these instructions establish the expected retrieval workflow.
 
@@ -503,6 +607,11 @@ and [examples/CLAUDE.md](../examples/CLAUDE.md). Merge the relevant example into
 your own file rather than replacing existing instructions.
 
 ## Update or remove a connection
+
+For bulk setup, apply these actions to the specific `devvault-<id>` entry rather
+than `devvault`. Removing a folder from the vault does not remove its saved
+connection. Rerunning bulk installation adds new folders and preserves matching
+entries; it does not prune old connections.
 
 | Change | Action |
 | --- | --- |
@@ -529,4 +638,7 @@ in your installed client.
   trusted project configuration and precedence over user defaults.
 - [Claude Code MCP](https://code.claude.com/docs/en/mcp): project/user scope,
   stdio registration, `.mcp.json` and project server approval.
+- [MCP stdio transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#stdio)
+  and [lifecycle](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle):
+  child-process communication, initialization and connection shutdown.
 

@@ -24,6 +24,7 @@ const maxConfigBytes = 1 << 20
 
 type Options struct {
 	Client, Repo, Config, Project, Target, Binary string
+	ProjectsDir                                   string
 	Global, AllowWrites                           bool
 }
 
@@ -38,6 +39,9 @@ type Result struct {
 // Run only in trusted repositories without concurrent configuration edits.
 func Project(o Options) (Result, error) {
 	var result Result
+	if o.ProjectsDir != "" {
+		return result, errors.New("use Projects for --projects-dir installation")
+	}
 	if o.Client != "codex" && o.Client != "claude" {
 		return result, errors.New("--client must be codex or claude")
 	}
@@ -58,17 +62,9 @@ func Project(o Options) (Result, error) {
 		return result, err
 	}
 	result.Project = cfg.ProjectID
-	binary, err := filepath.EvalSymlinks(o.Binary)
-	if err != nil {
-		return result, fmt.Errorf("resolve bridge executable: %w", err)
-	}
-	binary, err = filepath.Abs(binary)
+	binary, err := executable(o.Binary)
 	if err != nil {
 		return result, err
-	}
-	info, err := os.Stat(binary)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
-		return result, errors.New("bridge executable must be a regular executable file")
 	}
 	var root *os.Root
 	var absolute, name string
@@ -140,13 +136,17 @@ func Project(o Options) (Result, error) {
 }
 
 func mergeCodex(before []byte, binary string, args []string) ([]byte, error) {
+	return mergeCodexNamed(before, "devvault", binary, args)
+}
+
+func mergeCodexNamed(before []byte, server, binary string, args []string) ([]byte, error) {
 	var current map[string]any
 	if err := toml.Unmarshal(before, &current); err != nil {
 		return nil, errors.New("invalid existing Codex TOML; configuration left unchanged")
 	}
 	entry := map[string]any{"command": binary, "args": args, "startup_timeout_sec": 10, "tool_timeout_sec": 30}
 	var block bytes.Buffer
-	block.WriteString("[mcp_servers.devvault]\n")
+	fmt.Fprintf(&block, "[mcp_servers.%s]\n", server)
 	if err := toml.NewEncoder(&block).Encode(entry); err != nil {
 		return nil, err
 	}
@@ -159,11 +159,11 @@ func mergeCodex(before []byte, binary string, args []string) ([]byte, error) {
 		if !ok {
 			return nil, errors.New("Codex mcp_servers must be a table")
 		}
-		if existing, ok := table["devvault"]; ok {
-			if reflect.DeepEqual(existing, desired["mcp_servers"].(map[string]any)["devvault"]) {
+		if existing, ok := table[server]; ok {
+			if reflect.DeepEqual(existing, desired["mcp_servers"].(map[string]any)[server]) {
 				return before, nil
 			}
-			return nil, conflict()
+			return nil, namedConflict(server)
 		}
 	}
 	after := append(append(append([]byte{}, before...), '\n'), block.Bytes()...)
@@ -175,6 +175,10 @@ func mergeCodex(before []byte, binary string, args []string) ([]byte, error) {
 }
 
 func mergeClaude(before []byte, binary string, args []string) ([]byte, error) {
+	return mergeClaudeNamed(before, "devvault", binary, args)
+}
+
+func mergeClaudeNamed(before []byte, server, binary string, args []string) ([]byte, error) {
 	// Claude expands environment references even in literal command/arg paths.
 	for _, value := range append([]string{binary}, args...) {
 		if strings.Contains(value, "${") {
@@ -201,14 +205,14 @@ func mergeClaude(before []byte, binary string, args []string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if existing, ok := servers["devvault"]; ok {
+	if existing, ok := servers[server]; ok {
 		var a, b any
 		if json.Unmarshal(existing, &a) == nil && json.Unmarshal(entry, &b) == nil && reflect.DeepEqual(a, b) {
 			return before, nil
 		}
-		return nil, conflict()
+		return nil, namedConflict(server)
 	}
-	servers["devvault"] = entry
+	servers[server] = entry
 	current["mcpServers"], err = json.Marshal(servers)
 	if err != nil {
 		return nil, err
@@ -253,8 +257,24 @@ func jsonObject(data []byte) (map[string]json.RawMessage, error) {
 	return object, nil
 }
 
-func conflict() error {
-	return errors.New("devvault already exists with different settings; edit or remove that entry manually before installing")
+func namedConflict(server string) error {
+	return fmt.Errorf("%s already exists with different settings; edit or remove that entry manually before installing", server)
+}
+
+func executable(name string) (string, error) {
+	binary, err := filepath.EvalSymlinks(name)
+	if err != nil {
+		return "", fmt.Errorf("resolve bridge executable: %w", err)
+	}
+	binary, err = filepath.Abs(binary)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(binary)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return "", errors.New("bridge executable must be a regular executable file")
+	}
+	return binary, nil
 }
 
 func readConfig(root *os.Root, name string) ([]byte, os.FileMode, bool, error) {
@@ -365,6 +385,9 @@ func openDirectory(name string, create bool) (*os.Root, string, error) {
 		}
 		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			root.Close()
+			if err != nil {
+				return nil, "", fmt.Errorf("configuration directory must exist without symlink components: %w", err)
+			}
 			return nil, "", errors.New("configuration directory must exist without symlink components")
 		}
 		next, err := root.OpenRoot(part)

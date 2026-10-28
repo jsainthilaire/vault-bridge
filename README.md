@@ -18,6 +18,12 @@ bridge needs no plugin, database, network listener or separate API key.
 | Fix a connection, path or write error | [Troubleshooting](docs/troubleshooting.md) |
 | Run tests or the SDK verification helper | [Development and diagnostics](docs/development.md) |
 
+For visual walkthroughs, see the [component graph](docs/how-it-works.md#request-flow),
+[automatic startup sequence](docs/how-it-works.md#automatic-startup-and-tool-discovery)
+and [bulk project connections](docs/how-it-works.md#how-bulk-global-connections-work).
+The reference includes [command](docs/reference.md#command-reference) and
+[flag tables](docs/reference.md#flags-and-defaults), with defaults and valid combinations.
+
 ## Quick start
 
 To create a vault for a new project in an empty or missing folder, build the CLI
@@ -110,6 +116,20 @@ sent to its model provider.
 The [how-it-works guide](docs/how-it-works.md) explains project isolation, shared
 knowledge, tool paths, daily prompts and write behavior.
 
+## How the server starts automatically
+
+`vault-bridge install` saves a launch command and exits. When you start your
+coding client and its MCP connection is enabled and approved, the client launches
+the saved executable with `serve` and the selected project arguments. Codex and
+Claude Code already include the MCP client that manages this connection.
+
+The agent learns which tools are available, then calls them as needed for your
+request. Repository instructions make consulting the vault an explicit workflow;
+installation alone does not load every note into the conversation. Inspect
+`/mcp` and ask for `project_context` to verify retrieval. See the
+[startup walkthrough](docs/setup.md#where-to-run-the-server) for settings locations,
+client inspection commands and examples for bulk connections.
+
 ## Let the agent update project notes
 
 Add `--allow-writes` to a **new** connection's install command to enable
@@ -132,6 +152,20 @@ explicit read access to shared knowledge subtrees.
 Use [global installation](docs/setup.md#global-installation) when you want the
 **same selected project** available across repositories. Global registration
 keeps that identity fixed; it does not choose a project from the working directory.
+
+To register every existing project globally in one command:
+
+```sh
+"$BRIDGE_PATH" install --global --client codex \
+  --projects-dir "$VAULT_PATH/03-Projects"
+```
+
+Use `--client claude` for Claude Code. `--global` is required, with no prior global
+setup needed. Each immediate project folder gets its own `devvault-<project-id>`
+connection. All registered projects are available across repositories, with each
+server bound to one project. Validation completes before client settings change.
+See [bulk global setup](docs/setup.md#install-every-project-globally) for folder
+rules, conflicts, and optional writes.
 
 Vault Bridge's scope applies to its own MCP tools. Your agent's separate shell
 or filesystem access follows its client and OS permissions. Read the

@@ -31,6 +31,7 @@ Usage:
   vault-bridge install --client codex|claude --repo <code-repository> --config <absolute-config.yaml> --project <id>
   vault-bridge install <code-repository> --client codex|claude --target <vault/03-Projects/project-folder>
   vault-bridge install --global --client codex|claude --target <vault/03-Projects/project-folder>
+  vault-bridge install --global --client codex|claude --projects-dir <vault/03-Projects>
   vault-bridge install --client codex|claude --target <vault/03-Projects/project-folder> --allow-writes
   vault-bridge serve --config <absolute-config.yaml> --project <id> --transport stdio
   vault-bridge serve --target <vault/03-Projects/project-folder> --transport stdio
@@ -82,8 +83,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	f := flag.NewFlagSet(command, flag.ContinueOnError)
 	f.SetOutput(stderr)
-	var configPath, projectID, vaultPath, title, transport, client, repo, target string
+	var configPath, projectID, vaultPath, title, transport, client, repo, target, projectsDir string
 	var global, allowWrites bool
+	var projectsSelected bool
 	var positionalRepo string
 	// flag stops at the first positional argument. Accept the repository before
 	// the flags as well as after them for the install shorthand.
@@ -113,6 +115,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			f.StringVar(&client, "client", "", "Client to configure: codex or claude (required)")
 			f.StringVar(&repo, "repo", ".", "Existing code repository to configure")
 			f.BoolVar(&global, "global", false, "Register MCP tools in the client's user-level configuration")
+			f.StringVar(&projectsDir, "projects-dir", "", "Register every immediate project folder in a vault's 03-Projects directory (requires --global)")
 		}
 	default:
 		return errors.New("unknown command; use --help")
@@ -129,8 +132,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		} else if f.NArg() != 0 {
 			return errors.New("install accepts one code repository path; put flags before or after that path")
 		}
-		explicitRepo := false
-		f.Visit(func(option *flag.Flag) { explicitRepo = explicitRepo || option.Name == "repo" })
+		explicitRepo, explicitConnection := false, false
+		f.Visit(func(option *flag.Flag) {
+			explicitRepo = explicitRepo || option.Name == "repo"
+			projectsSelected = projectsSelected || option.Name == "projects-dir"
+			explicitConnection = explicitConnection || option.Name == "target" || option.Name == "config" || option.Name == "project"
+		})
+		if projectsSelected && !global {
+			return errors.New("--projects-dir requires --global")
+		}
+		if projectsSelected && explicitConnection {
+			return errors.New("--projects-dir cannot be combined with --target, --config or --project")
+		}
 		if global && (positionalRepo != "" || explicitRepo) {
 			return errors.New("--global cannot be combined with a code repository path or --repo")
 		}
@@ -182,7 +195,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if target != "" && configPath != "" {
 		return errors.New("--target and --config are mutually exclusive")
 	}
-	if target == "" && (configPath == "" || projectID == "") {
+	if !projectsSelected && target == "" && (configPath == "" || projectID == "") {
 		return errors.New("--config and --project are required")
 	}
 	if command == "serve" && transport != "stdio" {
@@ -192,6 +205,26 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		binary, err := os.Executable()
 		if err != nil {
 			return fmt.Errorf("locate vault-bridge executable: %w", err)
+		}
+		if projectsSelected {
+			result, err := install.Projects(install.Options{
+				Client: client, Repo: repo, ProjectsDir: projectsDir, Binary: binary,
+				Global: global, AllowWrites: allowWrites,
+			})
+			if err != nil {
+				return err
+			}
+			for _, project := range result.Projects {
+				state := "Installed"
+				if !project.Changed {
+					state = "Already installed"
+				}
+				if _, err := fmt.Fprintf(stdout, "%s devvault-%s globally for %s project %s in %s.\n", state, project.Project, client, project.Project, project.Path); err != nil {
+					return err
+				}
+			}
+			_, err = fmt.Fprintf(stdout, "Start a new %s session and check /mcp. All %d registered projects are available in every repository; each server keeps its own project scope.\n", client, len(result.Projects))
+			return err
 		}
 		result, err := install.Project(install.Options{
 			Client: client, Repo: repo, Config: configPath, Project: projectID, Target: target, Binary: binary,

@@ -4,7 +4,10 @@ Vault Bridge lets a coding agent consult project knowledge that lives outside
 its code repository. You keep ordinary Markdown notes, edit them in Obsidian or
 another editor, and choose exactly which project the bridge may serve.
 
+- [Components](#components)
 - [Request flow](#request-flow)
+- [Automatic startup and tool discovery](#automatic-startup-and-tool-discovery)
+- [How bulk global connections work](#how-bulk-global-connections-work)
 - [Where files belong](#where-files-belong)
 - [Everyday use](#everyday-use)
 - [Paths and shared knowledge](#paths-and-shared-knowledge)
@@ -14,6 +17,27 @@ another editor, and choose exactly which project the bridge may serve.
 For installation commands, use [Setup](setup.md). For all arguments and limits,
 use [Reference](reference.md).
 
+## Components
+
+Codex or Claude Code is the application you interact with. Its built-in MCP
+client connects to Vault Bridge. The agent chooses tools through that application;
+Vault Bridge runs the requested file operations and returns the results.
+
+| Component | Responsibility | Where it lives |
+| --- | --- | --- |
+| Installer (`vault-bridge install`) | Validates the selected notes and saves a launch command in the chosen client's settings, then exits. | The executable you built or installed |
+| Client settings | Record the executable, `serve` arguments and server name. | Repository or user configuration; see [locations](setup.md#where-to-run-the-server) |
+| Codex or Claude Code | Hosts the conversation, manages MCP connections and applies client tool permissions. | Your coding client |
+| Agent/model | Chooses relevant tools and uses their results to answer or implement your request. | The client's model session |
+| Vault Bridge server (`vault-bridge serve`) | Exposes tools, binds one project at launch, checks paths and returns bounded results. | A local child process started by the client |
+| Markdown vault | Holds project plans, decisions and optional shared knowledge. | Ordinary files on disk, editable in Obsidian or another editor |
+| Code repository and instructions | Hold implementation and the retrieval workflow in `AGENTS.md` or `CLAUDE.md`. | The repository where you work |
+
+The same executable provides installation and serving. An installer invocation
+finishes after saving configuration; a serving invocation stays connected to its
+client. The installer records its own executable's resolved absolute path, so
+run installation from the copy you intend to keep.
+
 ## Request flow
 
 MCP, the Model Context Protocol, lets a client discover tools and call them on
@@ -22,13 +46,18 @@ Code is the client that makes them available in your conversation.
 
 ```mermaid
 flowchart LR
-    User[Your request] --> Client[Codex or Claude Code]
-    Client -->|MCP over stdin/stdout| Bridge[Local Vault Bridge process]
-    Bridge --> Scope[Project scope and path checks]
-    Scope --> Notes[Project Markdown]
-    Scope --> Shared[Explicit shared read grants]
-    Notes -->|Bounded results and source paths| Client
-    Shared -->|Read-only results| Client
+    Installer["vault-bridge install"] -->|Saves command and arguments| Settings["Client settings"]
+    Settings -->|Loaded on connection| Client["Codex or Claude Code<br/>with built-in MCP client"]
+    Instructions["AGENTS.md or CLAUDE.md"] -->|Retrieval workflow| Client
+    User["Your request"] --> Client
+    Client <-->|MCP requests and results over stdio| Bridge["Vault Bridge tool handlers"]
+    subgraph Server["Local server process: one fixed project"]
+        Bridge <--> Scope["Project scope and path checks"]
+        Scope <--> Store["Bounded Markdown access"]
+    end
+    Store <-->|Read and optional project writes| Notes["Selected project notes"]
+    Shared["Explicit shared grants"] -->|Read only| Store
+    Editor["Obsidian or text editor"] <-->|Edit files directly| Notes
 ```
 
 The client starts the executable specified in its MCP settings. At startup, the
@@ -43,6 +72,127 @@ embedding database or background synchronization to maintain.
 The bridge runs locally and sends results back over stdio. Your coding client
 uses its own model connection and data policies; a local bridge does not make
 the model session offline. Vault Bridge itself needs no service API key.
+
+## Automatic startup and tool discovery
+
+After installing a connection, start a new Codex or Claude Code session and
+complete any applicable trust or server approval prompts. The client reads the
+saved `command` and `args` and launches Vault Bridge as a child process when it
+opens the MCP connection. You do not need a separate server terminal. This is the
+standard [MCP stdio transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#stdio):
+the client writes protocol messages to the child's stdin and reads replies from
+its stdout; diagnostics use stderr.
+
+For example, installing `--target /vault/03-Projects/my-app` saves the equivalent
+of this launch command, using your actual absolute executable and target paths:
+
+```sh
+/path/to/vault-bridge serve --target /vault/03-Projects/my-app \
+  --project my-app --transport stdio
+```
+
+The client performs the handshake and tool discovery. You only need to install
+the connection and use the client; the messages below are handled internally.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Client as Codex or Claude Code
+    participant Settings as Client settings
+    participant Bridge as Vault Bridge child process
+    participant Vault as Project Markdown
+    User->>Client: Start a new coding session
+    Client->>Settings: Load enabled MCP entries
+    Settings-->>Client: Executable and fixed project arguments
+    Note over User,Client: Complete trust and server approvals when required
+    Client->>Bridge: Launch executable with serve arguments
+    Bridge->>Bridge: Validate project scope and limits
+    Client->>Bridge: initialize
+    Bridge-->>Client: Server information and capabilities
+    Client->>Bridge: notifications/initialized
+    Client->>Bridge: tools/list
+    Bridge-->>Client: Tool names, descriptions and schemas
+    User->>Client: Read this project's roadmap
+    Note over Client: Agent selects tools; client applies permissions
+    Client->>Bridge: tools/call project_context
+    Bridge->>Vault: Read authorized index
+    Vault-->>Bridge: Markdown
+    Bridge-->>Client: Project identity and source paths
+    Client->>Bridge: tools/call document_read
+    Bridge->>Vault: Read authorized roadmap
+    Vault-->>Bridge: Markdown
+    Bridge-->>Client: Bounded content, revision and source path
+    Client-->>User: Answer grounded in the returned notes
+    User->>Client: End session
+    Client->>Bridge: Close connection and stop child process
+```
+
+The initialization exchange follows the
+[MCP lifecycle](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle).
+Vault Bridge advertises six read tools, plus two project write tools when its
+saved launch arguments include `--allow-writes`. A connected process handles
+successive calls; installation is not repeated for each question.
+
+**Automatic startup makes tools available; it does not read all your notes.**
+The agent chooses calls based on the task, tool descriptions and instructions.
+Merge the [knowledge workflow](setup.md#agent-knowledge-workflow) into your
+repository's instruction file to make consultation an explicit expectation.
+Confirm actual use by inspecting the tool calls and returned source paths.
+Installing Vault Bridge does not write those instructions for you.
+
+For client-specific configuration and approval details, see the official
+[Codex MCP guide](https://learn.chatgpt.com/docs/extend/mcp) and
+[Claude Code MCP guide](https://code.claude.com/docs/en/mcp).
+If a connection is missing or failed, inspect `/mcp` and follow
+[Troubleshooting](troubleshooting.md); a saved entry alone does not prove that
+the process started successfully.
+
+## How bulk global connections work
+
+`install --global --projects-dir /vault/03-Projects --client codex` enumerates
+existing project folders once. For `alpha` and `beta`, it saves two entries in
+the client's user configuration. Each entry launches the same executable with a
+different fixed target:
+
+```mermaid
+flowchart TB
+    Projects["03-Projects/<br/>alpha/ and beta/"] -->|Discover immediate folders| Install["Bulk installer"]
+    Install -->|Validate all then write once| Config["Global client settings"]
+    Config --> AEntry["devvault-alpha<br/>serve --target .../03-Projects/alpha"]
+    Config --> BEntry["devvault-beta<br/>serve --target .../03-Projects/beta"]
+    AEntry -->|Client launches| AServer["Server process A<br/>project alpha"]
+    BEntry -->|Client launches| BServer["Server process B<br/>project beta"]
+    AServer <-->|Authorized reads and optional writes| Alpha["alpha Markdown"]
+    BServer <-->|Authorized reads and optional writes| Beta["beta Markdown"]
+```
+
+The client can use both connections from any repository. A call on
+`devvault-alpha` can access alpha's notes; accessing beta requires calling
+`devvault-beta`. Server identity stays fixed even if a tool argument mentions
+another project. Bulk targets grant no shared knowledge access.
+
+| Installation mode | Saved server names | What a client session can access through these entries |
+| --- | --- | --- |
+| Project-local single project | `devvault` in the code repository | The selected project when that repository's configuration is loaded |
+| Global single project | `devvault` in user settings | The same selected project across repositories |
+| Global projects directory | `devvault-alpha`, `devvault-beta`, etc. in user settings | Every registered project through its separate connection, across repositories |
+
+Global configuration does not select a server from the current repository name.
+With several servers, name the intended connection in repository instructions
+and prompts, for example:
+
+```text
+Use devvault-alpha for this repository. Call its project_context and verify that
+the returned project is alpha, then read 03-Projects/alpha/roadmap.md.
+```
+
+New folders are picked up when you rerun bulk installation. Matching entries are
+left intact, new projects are added, and entries for removed folders remain
+until you remove them. There is no folder watcher. If two vaults have the same
+project ID, their `devvault-<id>` names collide; the installer reports a conflict
+instead of replacing an entry. See [bulk setup](setup.md#install-every-project-globally)
+for validation rules and [connection maintenance](setup.md#update-or-remove-a-connection)
+for changing saved entries.
 
 ## Where files belong
 
@@ -144,6 +294,13 @@ Shared content remains read-only even when project writes are enabled.
 Each process has one scope. Another code repository can reuse the same binary
 with a different launch target. A global connection keeps the same selected
 project everywhere; it does not infer identity from the repository you opened.
+
+Bulk global installation with `--projects-dir <vault/03-Projects>` creates one
+named connection per immediate project folder (`devvault-<project-id>`). All
+those connections are available to the client across repositories. Their server
+processes retain separate project scopes; the client can call tools on every
+registered connection. Bulk setup validates all projects before one client
+settings write and preserves existing matching connections on repeat runs.
 
 ## Updating notes and milestones
 

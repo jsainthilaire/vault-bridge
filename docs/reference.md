@@ -1,6 +1,8 @@
 # Reference
 
 - [Commands](#command-reference)
+- [Flags and defaults](#flags-and-defaults)
+- [Valid connection combinations](#valid-connection-combinations)
 - [Vault and project layout](#vault-layout)
 - [YAML configuration and shared grants](#configuration)
 - [MCP tool arguments, paths, and errors](#mcp-tools)
@@ -18,16 +20,58 @@ Use `make install PREFIX=/your/prefix` to choose another installation prefix.
 Run the installed executable's `install` command if connections should use that
 path instead of the checkout's local binary.
 
-| Command | Meaning | Example arguments |
-| --- | --- | --- |
-| `vault init` | Creates the vault structure, templates, dashboard, and selected project. Preserves existing notes. Omit both project flags to seed Vault Bridge. | `--path ../DevVault --id my-app --title "My App"` |
-| `project init` | Adds a project's planning documents and dashboard link to an existing vault. | `--vault ../DevVault --id my-app --title "My App"` |
-| `config check` | Validates the project folder, access scope, and limits without starting the server. | `--target ../DevVault/03-Projects/my-app` |
-| `install` | Registers `devvault` in project or global settings; add `--allow-writes` to enable two write tools alongside six read tools. | `/path/to/code --client codex --target ../DevVault/03-Projects/my-app` |
-| `install --global` | Makes the selected project's MCP connection available across repositories for your user account. | `--client codex --target ../DevVault/03-Projects/my-app` |
-| `serve` | Starts the MCP server over stdin/stdout; writes require `--allow-writes`. The client normally launches it automatically. | `--target ../DevVault/03-Projects/my-app` |
-| `--help` | Shows available commands. Add it after a command to see its flags. | `install --help` |
-| `--version` | Prints the executable's version. | No additional arguments. |
+Prefix each command below with `vault-bridge`. Initialization and installation
+are one-time setup operations that you can rerun; the client invokes `serve`
+when opening its MCP connection.
+
+| Command | Purpose and effect | Starts an MCP server? | Example arguments |
+| --- | --- | --- | --- |
+| `vault init` | Adds vault structure, templates, dashboard and a selected project, preserving existing notes. | No | `--path ../DevVault --id my-app --title "My App"` |
+| `project init` | Adds planning documents and links for one project in an existing vault. | No | `--vault ../DevVault --id my-app --title "My App"` |
+| `config check` | Validates one project's folder, scope and limits; leaves files unchanged. | No | `--target ../DevVault/03-Projects/my-app` |
+| `install` | Saves one `devvault` connection in a code repository's client settings. | No | `/path/to/code --client codex --target ../DevVault/03-Projects/my-app` |
+| `install --global` | Saves one `devvault` connection in user settings, available across repositories. | No | `--client codex --target ../DevVault/03-Projects/my-app` |
+| `install --global` with `--projects-dir` | Saves one `devvault-<id>` connection per immediate project folder in one atomic settings update. | No | `--client codex --projects-dir ../DevVault/03-Projects` |
+| `serve` | Runs the selected project's MCP tools over stdin/stdout until the connection ends. The client normally starts it. | Yes | `--target ../DevVault/03-Projects/my-app --transport stdio` |
+| `--help` or `-h` | Prints top-level help; use `<command> --help` for that command's flags. | No | `install --help` |
+| `--version` | Prints the bridge version and exits. | No | No additional arguments |
+
+`make build` compiles the executable. `make install` copies it to your installation
+prefix. Neither registers an MCP connection; that is the role of the executable's
+`install` command. See [automatic startup](how-it-works.md#automatic-startup-and-tool-discovery)
+for what happens after registration.
+
+## Flags and defaults
+
+Flags apply only to the commands listed. Values such as `<id>` and `<path>` are
+placeholders; replace them with your own values and quote paths containing spaces.
+
+| Flag or argument | Commands | Default / requirement | Meaning and constraints |
+| --- | --- | --- | --- |
+| `--path <vault>` | `vault init` | Required | Vault directory to create or extend. |
+| `--vault <vault>` | `project init` | Required | Existing vault to extend with one project. |
+| `--id <id>` | `vault init`, `project init` | Required for `project init`; paired with `--title` for `vault init` | Project ID for generated notes. Use lowercase letters/digits separated by single hyphens, at most 64 bytes; reserved directory names are excluded. |
+| `--title <text>` | `vault init`, `project init` | Required for `project init`; paired with `--id` for `vault init` | Human-readable project title. Omit both project flags on `vault init` to seed the bridge's own planning project. |
+| `--target <project-folder>` | `config check`, `install`, `serve` | Alternative to `--config` | One existing project directory directly inside `<vault>/03-Projects`. Defaults to no shared grants and standard resource limits. |
+| `--config <absolute-yaml>` | `config check`, `install`, `serve` | Alternative to `--target`; requires `--project` | YAML project mapping with optional shared grants and resource limits. Both the config path and its `vault_root` must be absolute. |
+| `--project <id>` | `config check`, `install`, `serve` | Required with `--config`; defaults to target folder name with `--target` | Fixed project identity for this launch. With `--target`, an explicit valid ID can alias a differently named folder. |
+| `--client codex` or `--client claude` | `install` | Required | Which client's settings to update. Run installation once for each client if you use both. |
+| `--repo <code-directory>` | `install` | Current directory (`.`) | Existing code repository receiving project-local settings; not the vault. Cannot be used with `--global`. |
+| `<code-directory>` positional argument | `install` | Alternative to `--repo` | Shorthand for the repository path. Put the flags before or after this path; do not also pass `--repo`. |
+| `--global` | `install` | `false` | Write user-level client settings. Cannot be combined with any repository argument. Required for bulk setup. |
+| `--projects-dir <directory>` | `install` | Unset; requires `--global` | Register all immediate project folders under `<vault>/03-Projects`. Cannot be combined with `--target`, `--config` or `--project`. |
+| `--allow-writes` | `install`, `serve` | `false` | Enable project Markdown creation and revision-checked updates. On `install`, persist this flag in the saved `serve` arguments; on bulk install, apply it to every project. Shared grants stay read-only. |
+| `--transport stdio` | `serve` | `stdio` | Only supported transport. Installation saves it automatically; `install` itself does not accept this flag. |
+| `--help` or `-h` | Every command | Unset | Print help and exit. For example, `project init --help`. |
+| `--version` | Top level only | Unset | Print the version; use it alone. |
+
+Relative vault, repository and target paths resolve from the invoking process's
+working directory. Installation saves absolute executable and target paths, so
+later client launches do not depend on where you ran the installer. Vault Bridge
+does not expand `~` or environment references in stored paths. Your shell can
+expand variables in commands such as `--target "$VAULT_PATH/03-Projects/my-app"`.
+
+## Valid connection combinations
 
 For `install`, `serve`, and `config check`, choose one connection form:
 
@@ -40,6 +84,30 @@ For `install`, `serve`, and `config check`, choose one connection form:
 `--project <id>` if the folder name is not a lowercase kebab-case ID or you need
 an explicit alias. Read tool paths remain vault-relative, such as
 `03-Projects/my-app/architecture.md`.
+
+For bulk installation only, use `--global --projects-dir <vault/03-Projects>`
+instead of either connection form. It cannot be combined with `--target`,
+`--config`, `--project`, `--repo`, or a positional repository. `--allow-writes`
+applies to each registered project. No prior global installation is required.
+Discovery is limited to 1024 total entries; immediate non-hidden directories
+must have valid project IDs. Regular files and hidden entries are ignored;
+non-hidden symlinks and special files are rejected. Empty project sets fail.
+All registered project tools are globally available, each with a separate fixed
+scope and no shared grants. See [bulk setup](setup.md#install-every-project-globally).
+
+| Task | Required selection | Optional additions |
+| --- | --- | --- |
+| Validate one direct target | `config check --target <project-folder>` | `--project <alias>` |
+| Validate a YAML mapping | `config check --config <absolute-yaml> --project <id>` | None |
+| Install one project locally | `install --client <client>` with either connection form above | Repository path or `--repo`; `--allow-writes` |
+| Install one project globally | `install --global --client <client>` with either connection form above | `--allow-writes` |
+| Install every project globally | `install --global --client <client> --projects-dir <projects-folder>` | `--allow-writes` |
+| Serve one project | `serve` with either single-project connection form above | `--transport stdio`; `--allow-writes` |
+
+There is no bulk `serve` command. Bulk installation saves separate single-project
+launch commands. `config check` validates access configuration; it does not test
+a live client connection or enable write tools. Use [client verification](setup.md#6-verify-retrieval-and-project-isolation)
+to check actual retrieval.
 
 
 ## Vault layout
