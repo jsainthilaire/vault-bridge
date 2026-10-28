@@ -32,6 +32,7 @@ when opening its MCP connection.
 | `install` | Saves one `devvault` connection in a code repository's client settings. | No | `/path/to/code --client codex --target ../DevVault/03-Projects/my-app` |
 | `install --global` | Saves one `devvault` connection in user settings, available across repositories. | No | `--client codex --target ../DevVault/03-Projects/my-app` |
 | `install --global` with `--projects-dir` | Saves one `devvault-<id>` connection per immediate project folder in one atomic settings update. | No | `--client codex --projects-dir ../DevVault/03-Projects` |
+| `install --global` with `--projects-dir` and `--source-dir` | Registers exact folder-name matches with existing vault indexes; reports skipped folders without creating docs. | No | `--client codex --projects-dir ../DevVault/03-Projects --source-dir ../source-projects` |
 | `serve` | Runs the selected project's MCP tools over stdin/stdout until the connection ends. The client normally starts it. | Yes | `--target ../DevVault/03-Projects/my-app --transport stdio` |
 | `--help` or `-h` | Prints top-level help; use `<command> --help` for that command's flags. | No | `install --help` |
 | `--version` | Prints the bridge version and exits. | No | No additional arguments |
@@ -60,12 +61,13 @@ placeholders; replace them with your own values and quote paths containing space
 | `<code-directory>` positional argument | `install` | Alternative to `--repo` | Shorthand for the repository path. Put the flags before or after this path; do not also pass `--repo`. |
 | `--global` | `install` | `false` | Write user-level client settings. Cannot be combined with any repository argument. Required for bulk setup. |
 | `--projects-dir <directory>` | `install` | Unset; requires `--global` | Register all immediate project folders under `<vault>/03-Projects`. Cannot be combined with `--target`, `--config` or `--project`. |
+| `--source-dir <directory>` | `install` | Unset; requires `--global` and `--projects-dir` | Filter to exact, case-sensitive immediate source-folder matches whose vault folder has a valid `index.md`. Report and skip unmatched folders/missing indexes. No recursive search or Git requirement. |
 | `--allow-writes` | `install`, `serve` | `false` | Enable project Markdown creation and revision-checked updates. On `install`, persist this flag in the saved `serve` arguments; on bulk install, apply it to every project. Shared grants stay read-only. |
 | `--transport stdio` | `serve` | `stdio` | Only supported transport. Installation saves it automatically; `install` itself does not accept this flag. |
 | `--help` or `-h` | Every command | Unset | Print help and exit. For example, `project init --help`. |
 | `--version` | Top level only | Unset | Print the version; use it alone. |
 
-Relative vault, repository and target paths resolve from the invoking process's
+Relative vault, repository, source-directory and target paths resolve from the invoking process's
 working directory. Installation saves absolute executable and target paths, so
 later client launches do not depend on where you ran the installer. Vault Bridge
 does not expand `~` or environment references in stored paths. Your shell can
@@ -95,6 +97,14 @@ non-hidden symlinks and special files are rejected. Empty project sets fail.
 All registered project tools are globally available, each with a separate fixed
 scope and no shared grants. See [bulk setup](setup.md#install-every-project-globally).
 
+With `--source-dir`, discovery is bounded separately to 1024 entries per parent.
+Only matched project folders undergo project-ID and index validation. Missing
+counterparts or indexes are reported as skips; malformed indexes or unsafe paths
+abort before the settings update. Zero eligible matches returns a failure with
+skip diagnostics on stderr. Source directories are only a selection filter,
+and previously installed entries outside the selection are retained. See
+[source matching](setup.md#match-vault-projects-to-source-folders).
+
 | Task | Required selection | Optional additions |
 | --- | --- | --- |
 | Validate one direct target | `config check --target <project-folder>` | `--project <alias>` |
@@ -102,6 +112,7 @@ scope and no shared grants. See [bulk setup](setup.md#install-every-project-glob
 | Install one project locally | `install --client <client>` with either connection form above | Repository path or `--repo`; `--allow-writes` |
 | Install one project globally | `install --global --client <client>` with either connection form above | `--allow-writes` |
 | Install every project globally | `install --global --client <client> --projects-dir <projects-folder>` | `--allow-writes` |
+| Install documented projects matching source folders | `install --global --client <client> --projects-dir <projects-folder> --source-dir <source-parent>` | `--allow-writes` |
 | Serve one project | `serve` with either single-project connection form above | `--transport stdio`; `--allow-writes` |
 
 There is no bulk `serve` command. Bulk installation saves separate single-project

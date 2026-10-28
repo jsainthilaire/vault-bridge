@@ -19,7 +19,15 @@ const maxProjectsEntries = 1024
 type ProjectsResult struct {
 	Path     string
 	Projects []Result
+	Skipped  []SkippedProject
 }
+
+type SkippedProject struct {
+	Project, Source, Target, Reason string
+}
+
+// ErrNoMatches returns skip details without writing client configuration.
+var ErrNoMatches = errors.New("no eligible projects matched; client settings unchanged")
 
 // Projects registers each immediate project directory as a separate global
 // connection. Validation and merging finish before one atomic settings write;
@@ -39,9 +47,13 @@ func Projects(o Options) (ProjectsResult, error) {
 	if err != nil {
 		return result, err
 	}
-	scopes, err := projectDirectories(o.ProjectsDir)
+	selections, skipped, err := selectProjects(o)
 	if err != nil {
 		return result, err
+	}
+	result.Skipped = skipped
+	if len(selections) == 0 {
+		return result, ErrNoMatches
 	}
 	binary, err := executable(o.Binary)
 	if err != nil {
@@ -65,8 +77,10 @@ func Projects(o Options) (ProjectsResult, error) {
 		}
 	}
 	after := before
-	for _, cfg := range scopes {
-		args := []string{"serve", "--target", filepath.Join(cfg.VaultRoot, filepath.FromSlash(cfg.ProjectRoot)), "--project", cfg.ProjectID, "--transport", "stdio"}
+	for _, selected := range selections {
+		cfg := selected.scope
+		target := filepath.Join(cfg.VaultRoot, filepath.FromSlash(cfg.ProjectRoot))
+		args := []string{"serve", "--target", target, "--project", cfg.ProjectID, "--transport", "stdio"}
 		if o.AllowWrites {
 			args = append(args, "--allow-writes")
 		}
@@ -83,7 +97,7 @@ func Projects(o Options) (ProjectsResult, error) {
 		if len(merged) > maxConfigBytes {
 			return ProjectsResult{}, errors.New("client configuration would exceed 1048576 bytes")
 		}
-		result.Projects = append(result.Projects, Result{Path: destination, Project: cfg.ProjectID, Changed: !bytes.Equal(after, merged)})
+		result.Projects = append(result.Projects, Result{Path: destination, Project: cfg.ProjectID, Changed: !bytes.Equal(after, merged), Source: selected.source, Target: target})
 		after = merged
 	}
 	if bytes.Equal(before, after) {
@@ -103,58 +117,19 @@ func Projects(o Options) (ProjectsResult, error) {
 }
 
 func projectDirectories(name string) ([]*config.Scope, error) {
-	if name == "" || strings.ContainsRune(name, 0) {
-		return nil, errors.New("--projects-dir must name a vault's 03-Projects directory")
-	}
-	absolute, err := filepath.Abs(name)
+	absolute, err := projectsDirectory(name)
 	if err != nil {
 		return nil, err
 	}
-	if filepath.Base(absolute) != "03-Projects" {
-		return nil, errors.New("--projects-dir must name a vault's 03-Projects directory")
-	}
-	root, _, err := openDirectory(absolute, false)
+	names, _, err := childDirectories(absolute, "projects")
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
-	dir, err := root.Open(".")
-	if err != nil {
-		return nil, err
-	}
-	defer dir.Close()
-	entries, err := dir.ReadDir(maxProjectsEntries + 1)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return nil, err
-	}
-	if len(entries) > maxProjectsEntries {
-		return nil, errors.New("projects directory exceeds 1024 entries")
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	var scopes []*config.Scope
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		info, err := root.Lstat(entry.Name())
+	for _, name := range names {
+		cfg, err := projectScope(absolute, name)
 		if err != nil {
-			return nil, err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("project entry %q must not be a symlink", entry.Name())
-		}
-		if !info.IsDir() {
-			if !info.Mode().IsRegular() {
-				return nil, fmt.Errorf("project entry %q must be a directory or regular file", entry.Name())
-			}
-			continue
-		}
-		if !config.ValidProjectID(entry.Name()) {
-			return nil, fmt.Errorf("project folder %q must be a lowercase kebab-case ID (maximum 64 bytes)", entry.Name())
-		}
-		cfg, err := config.FromTarget(filepath.Join(absolute, entry.Name()), "")
-		if err != nil {
-			return nil, fmt.Errorf("validate project %q: %w", entry.Name(), err)
+			return nil, fmt.Errorf("validate project %q: %w", name, err)
 		}
 		scopes = append(scopes, cfg)
 	}
@@ -162,4 +137,69 @@ func projectDirectories(name string) ([]*config.Scope, error) {
 		return nil, errors.New("projects directory contains no project folders")
 	}
 	return scopes, nil
+}
+
+func projectScope(parent, name string) (*config.Scope, error) {
+	if !config.ValidProjectID(name) {
+		return nil, errors.New("project folder must be a lowercase kebab-case ID (maximum 64 bytes)")
+	}
+	return config.FromTarget(filepath.Join(parent, name), "")
+}
+
+func projectsDirectory(name string) (string, error) {
+	if name == "" || strings.ContainsRune(name, 0) {
+		return "", errors.New("--projects-dir must name a vault's 03-Projects directory")
+	}
+	absolute, err := filepath.Abs(name)
+	if err != nil {
+		return "", err
+	}
+	if filepath.Base(absolute) != "03-Projects" {
+		return "", errors.New("--projects-dir must name a vault's 03-Projects directory")
+	}
+	return absolute, nil
+}
+
+// Read at most the entry cap plus one from a retained directory handle. Both
+// roots use the same symlink policy; source directories need not be Git repos.
+func childDirectories(name, label string) ([]string, string, error) {
+	root, absolute, err := openDirectory(name, false)
+	if err != nil {
+		return nil, "", fmt.Errorf("%s directory: %w", label, err)
+	}
+	defer root.Close()
+	dir, err := root.Open(".")
+	if err != nil {
+		return nil, "", err
+	}
+	defer dir.Close()
+	entries, err := dir.ReadDir(maxProjectsEntries + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, "", err
+	}
+	if len(entries) > maxProjectsEntries {
+		return nil, "", fmt.Errorf("%s directory exceeds 1024 entries", label)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	var names []string
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		info, err := root.Lstat(entry.Name())
+		if err != nil {
+			return nil, "", err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, "", fmt.Errorf("%s entry %q must not be a symlink", label, entry.Name())
+		}
+		if !info.IsDir() {
+			if !info.Mode().IsRegular() {
+				return nil, "", fmt.Errorf("%s entry %q must be a directory or regular file", label, entry.Name())
+			}
+			continue
+		}
+		names = append(names, entry.Name())
+	}
+	return names, absolute, nil
 }

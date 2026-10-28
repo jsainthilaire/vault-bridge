@@ -7,6 +7,7 @@ cover macOS and Linux, with read-only access as the starting point.
 - [Existing connections](#existing-connections)
 - [Global installation](#global-installation)
 - [Install every project globally](#install-every-project-globally)
+- [Match vault projects to source folders](#match-vault-projects-to-source-folders)
 - [Enable project writes](#enable-project-writes-and-update-milestones)
 - [Automatic server startup](#where-to-run-the-server)
 - [Manual Codex configuration](#connect-codex)
@@ -287,6 +288,61 @@ bound to its own project; the client can use the tools from all registered
 servers. This mode does not select a project from the working directory. Use
 project-local installation when each repository should receive only its own
 connection.
+
+## Match vault projects to source folders
+
+Supply both parent directories to install connections only for existing,
+documented projects that also have a source-code folder:
+
+```sh
+"$BRIDGE_PATH" install --global --client codex \
+  --projects-dir "$VAULT_PATH/03-Projects" \
+  --source-dir "/absolute/path/to/source-projects"
+```
+
+Use `--client claude` for Claude Code, or run once for each client. `--source-dir`
+requires `--global` and `--projects-dir`; it is not a substitute for `--repo`.
+No prior global connection is needed. Relative directory paths resolve from the
+installer's working directory.
+
+| Vault folder | Source folder | Result |
+| --- | --- | --- |
+| `03-Projects/my-app/index.md` exists | `source-projects/my-app/` exists | Register `devvault-my-app` globally. |
+| `03-Projects/docs-only/` | No same-named folder | Skip: no matching source folder. |
+| No same-named vault folder | `source-projects/source-only/` | Skip: no matching vault project; create no docs. |
+| `03-Projects/empty/` without `index.md` | `source-projects/empty/` | Skip: missing index. |
+| `03-Projects/my-app/` | `source-projects/My-App/` only | Skip both: names differ in case. |
+
+Matching is exact and case-sensitive even on a case-insensitive filesystem.
+Only immediate, non-hidden folders are considered; names are not normalized and
+nested repositories are not discovered. A `.git` directory is not required.
+Each parent is limited to 1024 total entries, including ignored files and hidden
+entries. Non-hidden symlinks and special entries are rejected in either parent.
+
+Matched project IDs and paths are validated. Each eligible project's `index.md`
+must be readable, regular, within the Markdown size limits, and valid UTF-8 with
+valid frontmatter when present. Unsafe paths, malformed or oversized indexes,
+and conflicting client entries abort the batch before settings are written.
+Skipped folders do not fail a batch that has eligible matches. If none qualify,
+the command exits unsuccessfully, prints skip reasons to stderr, and leaves
+client settings unchanged.
+
+Successful output lists installed/already-installed project names, absolute
+source/vault paths and skipped folders with reasons. The source path is used
+only for matching and reporting; it is not passed to the MCP server as a grant
+or used to set its working directory.
+
+The installer creates no vault notes, source files, repository settings or agent
+instructions. Add `--allow-writes` only when you want later agent calls to write
+project notes; setup itself still does not write them. All matched connections
+remain globally available from every repository. Choose the intended
+`devvault-<id>` server in prompts or instructions.
+
+Reruns add new eligible matches and preserve identical connections. Existing
+entries that no longer match are retained; remove those entries manually if
+needed. Omitting `--source-dir` preserves the original docs-only bulk mode,
+which does not require a source counterpart or an index. See the
+[matching diagram](how-it-works.md#how-bulk-global-connections-work).
 
 ## Enable project writes and update milestones
 

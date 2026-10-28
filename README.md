@@ -167,6 +167,21 @@ server bound to one project. Validation completes before client settings change.
 See [bulk global setup](docs/setup.md#install-every-project-globally) for folder
 rules, conflicts, and optional writes.
 
+To install only projects that also have a same-named source folder, add
+`--source-dir`:
+
+```sh
+"$BRIDGE_PATH" install --global --client codex \
+  --projects-dir "$VAULT_PATH/03-Projects" \
+  --source-dir "/absolute/path/to/source-projects"
+```
+
+This matches immediate folders by exact, case-sensitive name and requires an
+existing `index.md` in each matched vault project. It reports unmatched folders
+and missing indexes, and creates no documentation or source-repository settings.
+All matched connections are globally available; existing unmatched connections
+remain installed. See [source matching](docs/setup.md#match-vault-projects-to-source-folders).
+
 Vault Bridge's scope applies to its own MCP tools. Your agent's separate shell
 or filesystem access follows its client and OS permissions. Read the
 [security boundaries](docs/reference.md#security-boundaries) when choosing grants.

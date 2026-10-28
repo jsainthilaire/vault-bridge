@@ -32,6 +32,7 @@ Usage:
   vault-bridge install <code-repository> --client codex|claude --target <vault/03-Projects/project-folder>
   vault-bridge install --global --client codex|claude --target <vault/03-Projects/project-folder>
   vault-bridge install --global --client codex|claude --projects-dir <vault/03-Projects>
+  vault-bridge install --global --client codex|claude --projects-dir <vault/03-Projects> --source-dir <source-projects>
   vault-bridge install --client codex|claude --target <vault/03-Projects/project-folder> --allow-writes
   vault-bridge serve --config <absolute-config.yaml> --project <id> --transport stdio
   vault-bridge serve --target <vault/03-Projects/project-folder> --transport stdio
@@ -83,7 +84,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	f := flag.NewFlagSet(command, flag.ContinueOnError)
 	f.SetOutput(stderr)
-	var configPath, projectID, vaultPath, title, transport, client, repo, target, projectsDir string
+	var configPath, projectID, vaultPath, title, transport, client, repo, target, projectsDir, sourceDir string
 	var global, allowWrites bool
 	var projectsSelected bool
 	var positionalRepo string
@@ -116,6 +117,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			f.StringVar(&repo, "repo", ".", "Existing code repository to configure")
 			f.BoolVar(&global, "global", false, "Register MCP tools in the client's user-level configuration")
 			f.StringVar(&projectsDir, "projects-dir", "", "Register every immediate project folder in a vault's 03-Projects directory (requires --global)")
+			f.StringVar(&sourceDir, "source-dir", "", "Match immediate source folders by exact name to vault projects with index.md (requires --global and --projects-dir)")
 		}
 	default:
 		return errors.New("unknown command; use --help")
@@ -132,12 +134,19 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		} else if f.NArg() != 0 {
 			return errors.New("install accepts one code repository path; put flags before or after that path")
 		}
-		explicitRepo, explicitConnection := false, false
+		explicitRepo, explicitConnection, sourceSelected := false, false, false
 		f.Visit(func(option *flag.Flag) {
 			explicitRepo = explicitRepo || option.Name == "repo"
 			projectsSelected = projectsSelected || option.Name == "projects-dir"
+			sourceSelected = sourceSelected || option.Name == "source-dir"
 			explicitConnection = explicitConnection || option.Name == "target" || option.Name == "config" || option.Name == "project"
 		})
+		if sourceSelected && (!global || !projectsSelected || projectsDir == "") {
+			return errors.New("--source-dir requires --global and --projects-dir")
+		}
+		if sourceSelected && sourceDir == "" {
+			return errors.New("--source-dir must name an existing source-projects directory")
+		}
 		if projectsSelected && !global {
 			return errors.New("--projects-dir requires --global")
 		}
@@ -208,10 +217,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		if projectsSelected {
 			result, err := install.Projects(install.Options{
-				Client: client, Repo: repo, ProjectsDir: projectsDir, Binary: binary,
+				Client: client, Repo: repo, ProjectsDir: projectsDir, SourceDir: sourceDir, Binary: binary,
 				Global: global, AllowWrites: allowWrites,
 			})
 			if err != nil {
+				if errors.Is(err, install.ErrNoMatches) {
+					if reportErr := reportSkipped(stderr, result.Skipped); reportErr != nil {
+						return reportErr
+					}
+				}
 				return err
 			}
 			for _, project := range result.Projects {
@@ -222,6 +236,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 				if _, err := fmt.Fprintf(stdout, "%s devvault-%s globally for %s project %s in %s.\n", state, project.Project, client, project.Project, project.Path); err != nil {
 					return err
 				}
+				if project.Source != "" {
+					if _, err := fmt.Fprintf(stdout, "  source=%q vault=%q\n", project.Source, project.Target); err != nil {
+						return err
+					}
+				}
+			}
+			if err := reportSkipped(stdout, result.Skipped); err != nil {
+				return err
 			}
 			_, err = fmt.Fprintf(stdout, "Start a new %s session and check /mcp. All %d registered projects are available in every repository; each server keeps its own project scope.\n", client, len(result.Projects))
 			return err
@@ -274,6 +296,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if err != nil {
 		return errors.New("MCP stdio session failed")
+	}
+	return nil
+}
+
+func reportSkipped(out io.Writer, skipped []install.SkippedProject) error {
+	for _, project := range skipped {
+		if _, err := fmt.Fprintf(out, "Skipped %q: %s (source=%q vault=%q).\n", project.Project, project.Reason, project.Source, project.Target); err != nil {
+			return err
+		}
 	}
 	return nil
 }

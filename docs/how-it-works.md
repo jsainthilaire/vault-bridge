@@ -152,11 +152,17 @@ the process started successfully.
 `install --global --projects-dir /vault/03-Projects --client codex` enumerates
 existing project folders once. For `alpha` and `beta`, it saves two entries in
 the client's user configuration. Each entry launches the same executable with a
-different fixed target:
+different fixed target. Adding `--source-dir /work/source-projects` filters that
+selection to exact, case-sensitive immediate folder-name matches with an existing
+readable `index.md` in the vault. Matching never creates missing documentation.
+The optional matching step fits before settings are written:
 
 ```mermaid
 flowchart TB
-    Projects["03-Projects/<br/>alpha/ and beta/"] -->|Discover immediate folders| Install["Bulk installer"]
+    Projects["03-Projects/<br/>alpha/ and beta/"] -->|Discover immediate folders| Selection["Select vault projects"]
+    Sources["Optional source-projects/<br/>alpha/ and beta/"] -.->|With source-dir require exact names and vault indexes| Selection
+    Selection --> Install["Bulk installer"]
+    Selection -.->|Report unmatched folders and missing indexes| Skipped["Skip without creating docs"]
     Install -->|Validate all then write once| Config["Global client settings"]
     Config --> AEntry["devvault-alpha<br/>serve --target .../03-Projects/alpha"]
     Config --> BEntry["devvault-beta<br/>serve --target .../03-Projects/beta"]
@@ -170,6 +176,13 @@ The client can use both connections from any repository. A call on
 `devvault-alpha` can access alpha's notes; accessing beta requires calling
 `devvault-beta`. Server identity stays fixed even if a tool argument mentions
 another project. Bulk targets grant no shared knowledge access.
+
+Source folders are used only to choose installations and report the mapping;
+source files are not exposed through the bridge. Matched connections remain
+global and do not switch with the current repository. If no projects qualify,
+the command reports an error without writing client configuration. A new filter
+does not remove previously registered entries. See [source matching](setup.md#match-vault-projects-to-source-folders)
+for examples and validation rules.
 
 | Installation mode | Saved server names | What a client session can access through these entries |
 | --- | --- | --- |

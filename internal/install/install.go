@@ -24,7 +24,7 @@ const maxConfigBytes = 1 << 20
 
 type Options struct {
 	Client, Repo, Config, Project, Target, Binary string
-	ProjectsDir                                   string
+	ProjectsDir, SourceDir                        string
 	Global, AllowWrites                           bool
 }
 
@@ -32,6 +32,8 @@ type Result struct {
 	Path    string
 	Project string
 	Changed bool
+	Source  string // Matched source folder, populated only with --source-dir.
+	Target  string // Absolute vault project folder for bulk installations.
 }
 
 // Project validates the explicit vault mapping before touching client settings.
@@ -39,8 +41,8 @@ type Result struct {
 // Run only in trusted repositories without concurrent configuration edits.
 func Project(o Options) (Result, error) {
 	var result Result
-	if o.ProjectsDir != "" {
-		return result, errors.New("use Projects for --projects-dir installation")
+	if o.ProjectsDir != "" || o.SourceDir != "" {
+		return result, errors.New("use Projects for --projects-dir or --source-dir installation")
 	}
 	if o.Client != "codex" && o.Client != "claude" {
 		return result, errors.New("--client must be codex or claude")

@@ -19,6 +19,8 @@ that the client connected. See [Setup](setup.md) for the verification prompt.
 | Paths stopped working after moving folders | Update the client's executable and target paths. With YAML, also update `vault_root` and the config-file path. Restart the client. |
 | `install` reports that `devvault` already exists | Preserve other servers, remove only the old `devvault` entry, and reinstall with your chosen connection form. |
 | `--target` is rejected | Select one existing folder directly under `03-Projects`; do not select the vault root, `03-Projects` itself, or a symlink. |
+| Source matching reports no eligible projects | Pass both parent directories with `--global --projects-dir ... --source-dir ...`. Check exact case-sensitive child names and existing vault `index.md` files. Read the skip reasons; nested repositories are not discovered and no docs are generated. |
+| An old global project still appears after filtering | Source matching adds eligible connections and preserves existing entries. Remove the specific old `devvault-<id>` entry manually if it is no longer wanted. |
 | Write tools are missing | Append `--allow-writes` to the installed server arguments and restart the client. Rebuilding the executable alone does not change launch permissions. |
 | A write returns `conflict` | For updates, reread and merge using the latest revision. For creates, choose a new path or read and update the existing note. |
 | A write returns `permission_denied` | Enable project writes at launch and use an existing parent inside the active project. Shared knowledge and symlink paths cannot be written. |
