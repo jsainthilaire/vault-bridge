@@ -1,0 +1,48 @@
+---
+type: "project"
+project: {{quote .ID}}
+status: "planning"
+priority: "medium"
+language: ["go"]
+repository: ""
+created: {{quote .Date}}
+updated: {{quote .Date}}
+tags: [{{quote .ID}}, "project"]
+---
+
+# {{.Title}}
+
+{{if .Body}}{{.Body}}
+{{else}}
+## Motivation
+
+Describe the problem this project solves and who needs it.
+
+## Goals
+
+- Record the outcomes and acceptance criteria before implementation.
+
+## Constraints
+
+Record technical, operational and time constraints here.
+
+## Non-goals
+
+Record the work outside this project's scope.
+{{end}}
+
+## Planning
+
+- [[03-Projects/{{.ID}}/vision|Vision]]
+- [[03-Projects/{{.ID}}/requirements|Requirements]]
+- [[03-Projects/{{.ID}}/architecture|Architecture]]
+- [[03-Projects/{{.ID}}/roadmap|Roadmap]]
+- [[03-Projects/{{.ID}}/tasks|Tasks]]
+
+## Collections
+
+Keep feature specifications in `features/`, decisions in `decisions/`, research in
+`research/`, and records of actual work in `sessions/`. Use the templates in
+`08-Templates/` and link new notes here.
+
+[[03-Projects/index|Projects]] · [[00-Dashboard/Home|Home]]

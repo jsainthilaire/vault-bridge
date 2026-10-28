@@ -1,0 +1,8 @@
+# Merge into a trusted code repository's .codex/config.toml; replace the paths and project ID.
+# Keep the generated file local when it contains machine-specific paths.
+# This example uses YAML for custom limits/shared grants. For direct --target setup, see docs/setup.md.
+[mcp_servers.devvault]
+command = "/ABSOLUTE/PATH/TO/vault-bridge/.bin/vault-bridge"
+args = ["serve", "--config", "/ABSOLUTE/PATH/TO/vault-bridge.local.yaml", "--project", "my-project", "--transport", "stdio"]
+startup_timeout_sec = 10
+tool_timeout_sec = 30

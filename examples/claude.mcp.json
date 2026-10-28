@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "devvault": {
+      "type": "stdio",
+      "command": "/ABSOLUTE/PATH/TO/vault-bridge/.bin/vault-bridge",
+      "args": ["serve", "--config", "/ABSOLUTE/PATH/TO/vault-bridge.local.yaml", "--project", "my-project", "--transport", "stdio"]
+    }
+  }
+}

@@ -1,0 +1,8 @@
+/bin/
+/.bin/
+/coverage.out
+/vault-bridge.local.yaml
+/.codex/config.toml
+/.mcp.json
+.DS_Store
+__pycache__/

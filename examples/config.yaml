@@ -1,0 +1,12 @@
+# Replace this absolute path. No tilde or environment variable expansion.
+version: 1
+vault_root: /ABSOLUTE/PATH/TO/DevVault
+projects:
+  my-project:
+    folder: 03-Projects/my-project
+    shared_read_paths: []
+    # Optional explicit grant: [05-Knowledge/Go]
+limits:
+  max_document_bytes: 262144
+  max_search_results: 25
+  max_search_scan_files: 5000
