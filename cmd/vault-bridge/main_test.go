@@ -96,10 +96,11 @@ func TestCLIInstallTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := scaffold.VaultInit(root); err != nil {
+	vault := filepath.Join(root, "vault")
+	if err := scaffold.VaultInit(vault); err != nil {
 		t.Fatal(err)
 	}
-	target := filepath.Join(root, "03-Projects", "vault-bridge")
+	target := filepath.Join(vault, "03-Projects", "vault-bridge")
 	for _, client := range []string{"codex", "claude"} {
 		for _, position := range []string{"leading", "trailing", "flag"} {
 			t.Run(client+"/"+position, func(t *testing.T) {
@@ -145,11 +146,12 @@ func TestCLIInstall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := scaffold.VaultInit(root); err != nil {
+	vault := filepath.Join(root, "vault")
+	if err := scaffold.VaultInit(vault); err != nil {
 		t.Fatal(err)
 	}
 	configFile := filepath.Join(root, "config.yaml")
-	configData := fmt.Sprintf("version: 1\nvault_root: %q\nprojects:\n  vault-bridge:\n    folder: 03-Projects/vault-bridge\n", root)
+	configData := fmt.Sprintf("version: 1\nvault_root: %q\nprojects:\n  vault-bridge:\n    folder: 03-Projects/vault-bridge\n", vault)
 	if err := os.WriteFile(configFile, []byte(configData), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -9,7 +9,7 @@ decisions; a separate Go repository holds source code, tests and client setup.
 ## Goals
 
 - Retrieve source-attributed context for exactly one explicitly configured project.
-- Keep shared knowledge opt-in at explicit subtree boundaries and read-only.
+- Keep shared knowledge opt-in; explicit --shared folders become writable only with --allow-writes.
 - Enable project note and milestone updates only with explicit write authorization.
 - Preserve authored notes and remain independent of Obsidian plugins.
 
@@ -59,7 +59,7 @@ the trusted launch argument. Shared subtree grants default to empty. Expose
 project_context, document_list, document_read, document_search, decision_list and
 feature_list, without a project selector in tool arguments. With --allow-writes,
 also expose document_create and revision-checked document_update inside the active
-project only; shared grants remain read-only.
+project and explicit --shared folders; YAML shared_read_paths remain read-only unless also covered by --shared.
 
 ## Security and acceptance
 
@@ -251,7 +251,7 @@ is always read-only. Do not expose deletion or directory creation.
 - [ ] Create notes without replacing existing files; preserve permissions on updates.
 - [ ] Return full-content revisions and reject stale updates with conflict.
 - [ ] Preserve authored roadmap content while adding or updating milestone checkboxes.
-- [ ] Reject sibling/shared/hidden/non-Markdown/symlink writes and malformed or oversized content.
+- [ ] Reject sibling/ungranted-shared/hidden/non-Markdown/symlink writes and malformed or oversized content.
 - [ ] Coordinate cooperating writers and respect canceled lock waits.
 - [ ] Verify SDK tool schemas, mutation annotations and redacted audit records.
 
@@ -261,7 +261,7 @@ Use temporary vaults only. Reconcile these proposed checks with actual test resu
 	{"decisions/ADR-004-opt-in-project-writes", "decision", "ADR-004: Opt-in project writes", `## Context
 
 Agents need to maintain project notes and roadmap milestones without gaining
-write access to unrelated projects or shared knowledge.
+write access to unrelated projects or ungranted shared knowledge.
 
 ## Decision
 
@@ -269,11 +269,12 @@ Keep serving read-only by default. A trusted --allow-writes launch flag enables
 Markdown create and revision-checked update operations inside the active project.
 Read responses include the complete source SHA-256 revision; replacements require
 that expected revision. Creates are exclusive and replacements are atomic.
-Shared grants stay read-only and parent directories must already exist.
+Explicit --shared folders are also writable with --allow-writes. YAML-only grants stay read-only; parent directories must already exist.
 
 ## Concurrency and audit
 
-On macOS and Linux, a retained hidden project lock coordinates bridge writers.
+On macOS and Linux, a retained hidden project lock coordinates project writers.
+Shared writers lock the note parent so overlapping grants use the same lock.
 Check revisions again immediately before publishing. External editors do not
 honor that lock and can race the final comparison; avoid simultaneous external
 edits to the same note. Emit best-effort successful-write audit metadata to

@@ -10,7 +10,7 @@ import (
 )
 
 func openProjectWriteLock(*os.Root) (*os.File, error) {
-	return nil, scope.Err("permission_denied", "project writes are supported only on Linux and macOS")
+	return nil, scope.Err("permission_denied", "Markdown writes are supported only on Linux and macOS")
 }
 
 func openWriteSnapshot(root *os.Root, name string) (*os.File, error) {
@@ -18,7 +18,7 @@ func openWriteSnapshot(root *os.Root, name string) (*os.File, error) {
 }
 
 func lockWriteFile(context.Context, *os.File) error {
-	return scope.Err("permission_denied", "project writes are supported only on Linux and macOS")
+	return scope.Err("permission_denied", "Markdown writes are supported only on Linux and macOS")
 }
 
 func unlockWriteFile(*os.File) {}

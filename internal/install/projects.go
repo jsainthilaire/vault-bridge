@@ -77,14 +77,23 @@ func Projects(o Options) (ProjectsResult, error) {
 		}
 	}
 	after := before
+	instructions := make([]*instructionEdit, 0, len(selections))
+	instructionBytes := 0
 	for _, selected := range selections {
 		cfg := selected.scope
+		if err := config.AddShared(cfg, o.SharedPaths); err != nil {
+			return ProjectsResult{}, err
+		}
 		target := filepath.Join(cfg.VaultRoot, filepath.FromSlash(cfg.ProjectRoot))
 		args := []string{"serve", "--target", target, "--project", cfg.ProjectID, "--transport", "stdio"}
 		if o.AllowWrites {
 			args = append(args, "--allow-writes")
 		}
 		server := "devvault-" + cfg.ProjectID
+		args, err = sharedLaunchArgs(after, o.Client, server, binary, args, cfg)
+		if err != nil {
+			return ProjectsResult{}, err
+		}
 		var merged []byte
 		if o.Client == "codex" {
 			merged, err = mergeCodexNamed(after, server, binary, args)
@@ -97,21 +106,47 @@ func Projects(o Options) (ProjectsResult, error) {
 		if len(merged) > maxConfigBytes {
 			return ProjectsResult{}, errors.New("client configuration would exceed 1048576 bytes")
 		}
-		result.Projects = append(result.Projects, Result{Path: destination, Project: cfg.ProjectID, Changed: !bytes.Equal(after, merged), Source: selected.source, Target: target})
+		var edit *instructionEdit
+		if selected.source != "" {
+			edit, err = prepareInstructions(selected.source, o.Client, server, cfg.ProjectID, cfg.VaultRoot, o.AllowWrites)
+			if err != nil {
+				return ProjectsResult{}, err
+			}
+			if err := edit.setShared(cfg, o.AllowWrites); err != nil {
+				return ProjectsResult{}, err
+			}
+			instructionBytes += len(edit.before) + len(edit.after)
+			if instructionBytes > 16<<20 {
+				return ProjectsResult{}, errors.New("agent instruction batch exceeds 16 MiB; install smaller source groups")
+			}
+		}
+		instructions = append(instructions, edit)
+		result.Projects = append(result.Projects, Result{Path: destination, Project: cfg.ProjectID, Changed: !bytes.Equal(after, merged), Source: selected.source, Target: target, Binary: binary, Args: args, IndexPath: cfg.ProjectRoot + "/index.md", AllowWrites: o.AllowWrites})
+		installed := &result.Projects[len(result.Projects)-1]
+		installed.SharedPaths = cfg.SharedGrants()
+		if o.AllowWrites {
+			installed.SharedWritablePaths = append([]string(nil), cfg.SharedPaths...)
+		}
 		after = merged
 	}
-	if bytes.Equal(before, after) {
-		return result, nil
-	}
-	if root == nil {
-		root, _, err = openDirectory(filepath.Dir(destination), true)
-		if err != nil {
+	if !bytes.Equal(before, after) {
+		if root == nil {
+			root, _, err = openDirectory(filepath.Dir(destination), true)
+			if err != nil {
+				return ProjectsResult{}, err
+			}
+			defer root.Close()
+		}
+		if err := writeConfig(root, name, before, after, mode, exists); err != nil {
 			return ProjectsResult{}, err
 		}
-		defer root.Close()
 	}
-	if err := writeConfig(root, name, before, after, mode, exists); err != nil {
-		return ProjectsResult{}, err
+	for i, edit := range instructions {
+		if edit != nil {
+			if err := edit.apply(&result.Projects[i]); err != nil {
+				return result, fmt.Errorf("connections saved, but agent instructions incomplete; fix the error and rerun install: %w", err)
+			}
+		}
 	}
 	return result, nil
 }

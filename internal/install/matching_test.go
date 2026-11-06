@@ -18,7 +18,7 @@ import (
 func matchingFixture(t *testing.T, client string) (Options, string) {
 	t.Helper()
 	o, destination := projectsFixture(t, client)
-	o.SourceDir = filepath.Join(filepath.Dir(o.ProjectsDir), "Source Projects")
+	o.SourceDir = filepath.Join(filepath.Dir(filepath.Dir(o.ProjectsDir)), "Source Projects")
 	for _, id := range []string{"alpha", "vault-bridge", "zeta"} {
 		mkdir(t, filepath.Join(o.SourceDir, id))
 	}
@@ -125,8 +125,17 @@ func TestSourceMatchingInstallation(t *testing.T) {
 						t.Fatal("repeat reported change")
 					}
 				}
-				if !reflect.DeepEqual(beforeVault, treeSnapshot(t, o.ProjectsDir)) || !reflect.DeepEqual(beforeSource, treeSnapshot(t, o.SourceDir)) {
-					t.Fatal("installer changed vault or source tree")
+				afterSource := treeSnapshot(t, o.SourceDir)
+				for _, id := range []string{"alpha", "vault-bridge"} {
+					path := filepath.Join(o.SourceDir, id, instructionName(client))
+					if !strings.Contains(string(read(t, path)), "`devvault-"+id+"`") {
+						t.Fatal("missing matched project guidance")
+					}
+					assertInstructionWriteMode(t, read(t, path), writes)
+					delete(afterSource, path)
+				}
+				if !reflect.DeepEqual(beforeVault, treeSnapshot(t, o.ProjectsDir)) || !reflect.DeepEqual(beforeSource, afterSource) {
+					t.Fatal("installer changed vault or unrelated source files")
 				}
 				put(t, filepath.Join(o.ProjectsDir, "new-match/index.md"), "# New\n")
 				mkdir(t, filepath.Join(o.SourceDir, "new-match"))

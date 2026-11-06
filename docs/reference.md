@@ -29,12 +29,12 @@ when opening its MCP connection.
 | `vault init` | Adds vault structure, templates, dashboard and a selected project, preserving existing notes. | No | `--path ../DevVault --id my-app --title "My App"` |
 | `project init` | Adds planning documents and links for one project in an existing vault. | No | `--vault ../DevVault --id my-app --title "My App"` |
 | `config check` | Validates one project's folder, scope and limits; leaves files unchanged. | No | `--target ../DevVault/03-Projects/my-app` |
-| `install` | Saves one `devvault` connection in a code repository's client settings. | No | `/path/to/code --client codex --target ../DevVault/03-Projects/my-app` |
-| `install --global` | Saves one `devvault` connection in user settings, available across repositories. | No | `--client codex --target ../DevVault/03-Projects/my-app` |
-| `install --global` with `--projects-dir` | Saves one `devvault-<id>` connection per immediate project folder in one atomic settings update. | No | `--client codex --projects-dir ../DevVault/03-Projects` |
-| `install --global` with `--projects-dir` and `--source-dir` | Registers exact folder-name matches with existing vault indexes; reports skipped folders without creating docs. | No | `--client codex --projects-dir ../DevVault/03-Projects --source-dir ../source-projects` |
+| `install` | Saves one `devvault` connection and managed agent guidance; verifies startup, tools and index retrieval. | Temporarily, for SDK verification | `/path/to/code --client codex --target ../DevVault/03-Projects/my-app` |
+| `install --global` | Saves and verifies one `devvault` connection in user settings, available across repositories. | Temporarily, for SDK verification | `--client codex --target ../DevVault/03-Projects/my-app` |
+| `install --global` with `--projects-dir` | Saves one `devvault-<id>` connection per immediate project folder in one atomic settings update, then verifies each. | Temporarily, for SDK verification | `--client codex --projects-dir ../DevVault/03-Projects` |
+| `install --global` with `--projects-dir` and `--source-dir` | Registers exact folder-name matches, adds agent guidance to matched repositories and verifies connections; never creates vault notes. | Temporarily, for SDK verification | `--client codex --projects-dir ../DevVault/03-Projects --source-dir ../source-projects` |
 | `serve` | Runs the selected project's MCP tools over stdin/stdout until the connection ends. The client normally starts it. | Yes | `--target ../DevVault/03-Projects/my-app --transport stdio` |
-| `--help` or `-h` | Prints top-level help; use `<command> --help` for that command's flags. | No | `install --help` |
+| `--help` or `-h` | Prints a getting-started guide; use `<command> --help` for examples and that command's flags. | No | `install --help` |
 | `--version` | Prints the bridge version and exits. | No | No additional arguments |
 
 `make build` compiles the executable. `make install` copies it to your installation
@@ -62,7 +62,8 @@ placeholders; replace them with your own values and quote paths containing space
 | `--global` | `install` | `false` | Write user-level client settings. Cannot be combined with any repository argument. Required for bulk setup. |
 | `--projects-dir <directory>` | `install` | Unset; requires `--global` | Register all immediate project folders under `<vault>/03-Projects`. Cannot be combined with `--target`, `--config` or `--project`. |
 | `--source-dir <directory>` | `install` | Unset; requires `--global` and `--projects-dir` | Filter to exact, case-sensitive immediate source-folder matches whose vault folder has a valid `index.md`. Report and skip unmatched folders/missing indexes. No recursive search or Git requirement. |
-| `--allow-writes` | `install`, `serve` | `false` | Enable project Markdown creation and revision-checked updates. On `install`, persist this flag in the saved `serve` arguments; on bulk install, apply it to every project. Shared grants stay read-only. |
+| `--shared <vault-relative-folder>` | `config check`, `install`, `serve` | No CLI shared grants | Repeatable; grant `05-Knowledge` or an existing visible folder beneath it. Read-only unless `--allow-writes` is also enabled. At most 32 distinct shared grants combined with YAML grants. Bulk installation applies these folders to every selected project. |
+| `--allow-writes` | `install`, `serve` | `false` | Enable Markdown creation and revision-checked updates in the project and explicit `--shared` folders. Persisted in the saved launch arguments. YAML `shared_read_paths` remain read-only unless also covered by `--shared`. |
 | `--transport stdio` | `serve` | `stdio` | Only supported transport. Installation saves it automatically; `install` itself does not accept this flag. |
 | `--help` or `-h` | Every command | Unset | Print help and exit. For example, `project init --help`. |
 | `--version` | Top level only | Unset | Print the version; use it alone. |
@@ -79,7 +80,7 @@ For `install`, `serve`, and `config check`, choose one connection form:
 
 | Options | When to use them |
 | --- | --- |
-| `--target <project-docs-folder>` | Connect directly to one existing folder under `03-Projects`. The folder name supplies the project ID; default limits apply and shared access is empty. |
+| `--target <project-docs-folder>` | Connect directly to one existing folder under `03-Projects`. The folder name supplies the project ID; default limits apply. Add `--shared` for explicit shared access. |
 | `--config <absolute-yaml-path> --project <id>` | Use an explicit YAML mapping with custom limits or optional shared knowledge grants. See [Configuration](#configuration). |
 
 `--target` and `--config` are mutually exclusive. With `--target`, use
@@ -95,7 +96,7 @@ Discovery is limited to 1024 total entries; immediate non-hidden directories
 must have valid project IDs. Regular files and hidden entries are ignored;
 non-hidden symlinks and special files are rejected. Empty project sets fail.
 All registered project tools are globally available, each with a separate fixed
-scope and no shared grants. See [bulk setup](setup.md#install-every-project-globally).
+scope and no shared grants unless supplied with `--shared`. See [bulk setup](setup.md#install-every-project-globally).
 
 With `--source-dir`, discovery is bounded separately to 1024 entries per parent.
 Only matched project folders undergo project-ID and index validation. Missing
@@ -118,7 +119,9 @@ and previously installed entries outside the selection are retained. See
 There is no bulk `serve` command. Bulk installation saves separate single-project
 launch commands. `config check` validates access configuration; it does not test
 a live client connection or enable write tools. Use [client verification](setup.md#6-verify-retrieval-and-project-isolation)
-to check actual retrieval.
+to check retrieval in your coding client. `install` automatically checks startup,
+tools and index retrieval through the SDK without writing vault notes; this is
+separate from the coding client's trust and connection state.
 
 
 ## Vault layout
@@ -211,7 +214,11 @@ non-Markdown files. Frontmatter has a 32 KiB bound; paths and queries have a
 
 Projects map explicitly beneath `03-Projects/`. Shared grants default to empty;
 to permit Go references, add `shared_read_paths: [05-Knowledge/Go]`. A grant permits
-only that subtree and its descendants. Broad vault-wide grants are rejected.
+only that subtree and its descendants, and remains read-only. The separate
+repeatable `--shared` launch flag accepts `05-Knowledge` itself or its subfolders;
+those explicit grants become writable with `--allow-writes`. It works with both
+connection forms and never modifies the YAML file. Existing YAML grants are not
+automatically elevated. Broad vault-wide grants and other projects are rejected.
 Hidden files, secrets, attachments, and non-Markdown files remain excluded even
 inside a grant.
 
@@ -295,6 +302,8 @@ MCP. It adds missing notes and dashboard links while preserving authored notes.
 Review setup paths before invoking it.
 
 The MCP server is read-only by default. With `--allow-writes`, it can create and
-replace the active project's visible Markdown notes using revision checks.
-Shared grants and other projects remain outside its write scope.
+replace visible Markdown notes in the active project and explicit `--shared`
+folders using revision checks. Legacy YAML-only grants and other projects remain
+outside its write scope. Shared writes lock the note's parent directory so
+processes with overlapping grants coordinate on the same document.
 

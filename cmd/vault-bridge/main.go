@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -19,32 +20,6 @@ import (
 	"github.com/jsainthilaire/vault-bridge/internal/scaffold"
 	"github.com/jsainthilaire/vault-bridge/internal/vault"
 )
-
-const usage = `Vault Bridge — local project knowledge over scoped MCP
-
-Usage:
-  vault-bridge vault init --path <vault>
-  vault-bridge vault init --path <vault> --id <id> --title <title>
-  vault-bridge project init --vault <vault> --id <id> --title <title>
-  vault-bridge config check --config <absolute-config.yaml> --project <id>
-  vault-bridge config check --target <vault/03-Projects/project-folder>
-  vault-bridge install --client codex|claude --repo <code-repository> --config <absolute-config.yaml> --project <id>
-  vault-bridge install <code-repository> --client codex|claude --target <vault/03-Projects/project-folder>
-  vault-bridge install --global --client codex|claude --target <vault/03-Projects/project-folder>
-  vault-bridge install --global --client codex|claude --projects-dir <vault/03-Projects>
-  vault-bridge install --global --client codex|claude --projects-dir <vault/03-Projects> --source-dir <source-projects>
-  vault-bridge install --client codex|claude --target <vault/03-Projects/project-folder> --allow-writes
-  vault-bridge serve --config <absolute-config.yaml> --project <id> --transport stdio
-  vault-bridge serve --target <vault/03-Projects/project-folder> --transport stdio
-  vault-bridge --version
-
-Initialization adds missing files and links and preserves authored notes.
-Use vault init --id and --title to create a vault for your chosen project.
-Serve binds exactly one configured project. Shared knowledge requires explicit grants.
-Serving is read-only unless --allow-writes enables project Markdown creation and revision-checked updates.
-Configuration and vault_root must use absolute paths; ~ and variables are not expanded.
-Use a command's --help for flags. Stdout is reserved for MCP when serving.
-`
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -84,8 +59,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	f := flag.NewFlagSet(command, flag.ContinueOnError)
 	f.SetOutput(stderr)
+	f.Usage = func() {
+		fmt.Fprint(f.Output(), commandHelp(command))
+		fmt.Fprintln(f.Output(), "\nFlags:")
+		f.PrintDefaults()
+	}
 	var configPath, projectID, vaultPath, title, transport, client, repo, target, projectsDir, sourceDir string
 	var global, allowWrites bool
+	var sharedPaths []string
 	var projectsSelected bool
 	var positionalRepo string
 	// flag stops at the first positional argument. Accept the repository before
@@ -103,11 +84,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		f.StringVar(&projectID, "id", "", "Stable lowercase-kebab-case project ID (required)")
 		f.StringVar(&title, "title", "", "Project title (required)")
 	case "config check", "serve", "install":
+		f.Func("shared", "Vault-relative shared folder (05-Knowledge or a subfolder); repeat to add grants; writable with --allow-writes", func(value string) error {
+			if len(sharedPaths) >= config.MaxSharedPaths {
+				return errors.New("at most 32 --shared flags are allowed")
+			}
+			sharedPaths = append(sharedPaths, value)
+			return nil
+		})
 		f.StringVar(&configPath, "config", "", "Absolute YAML configuration path (requires --project; alternative to --target)")
 		f.StringVar(&projectID, "project", "", "Explicit trusted project ID (defaults to target folder name with --target)")
 		f.StringVar(&target, "target", "", "Project docs folder directly under a vault's 03-Projects directory (alternative to --config)")
 		if command == "serve" || command == "install" {
-			f.BoolVar(&allowWrites, "allow-writes", false, "Enable project-only Markdown create/update tools; shared knowledge stays read-only")
+			f.BoolVar(&allowWrites, "allow-writes", false, "Enable Markdown create/update in the project and explicit --shared folders; YAML shared_read_paths remain read-only")
 		}
 		if command == "serve" {
 			f.StringVar(&transport, "transport", "stdio", "MCP transport (only stdio supported)")
@@ -205,7 +193,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return errors.New("--target and --config are mutually exclusive")
 	}
 	if !projectsSelected && target == "" && (configPath == "" || projectID == "") {
-		return errors.New("--config and --project are required")
+		return errors.New("choose --target <vault/03-Projects/project-folder> or --config <absolute-config.yaml> with --project <id>")
 	}
 	if command == "serve" && transport != "stdio" {
 		return errors.New("unsupported transport: only stdio is available")
@@ -218,7 +206,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if projectsSelected {
 			result, err := install.Projects(install.Options{
 				Client: client, Repo: repo, ProjectsDir: projectsDir, SourceDir: sourceDir, Binary: binary,
-				Global: global, AllowWrites: allowWrites,
+				Global: global, AllowWrites: allowWrites, SharedPaths: sharedPaths,
 			})
 			if err != nil {
 				if errors.Is(err, install.ErrNoMatches) {
@@ -241,6 +229,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 						return err
 					}
 				}
+				if err := finishInstall(ctx, stdout, project, "devvault-"+project.Project); err != nil {
+					return err
+				}
 			}
 			if err := reportSkipped(stdout, result.Skipped); err != nil {
 				return err
@@ -250,7 +241,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		result, err := install.Project(install.Options{
 			Client: client, Repo: repo, Config: configPath, Project: projectID, Target: target, Binary: binary,
-			Global: global, AllowWrites: allowWrites,
+			Global: global, AllowWrites: allowWrites, SharedPaths: sharedPaths,
 		})
 		if err != nil {
 			return err
@@ -258,6 +249,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		state := "Installed"
 		if !result.Changed {
 			state = "Already installed"
+		}
+		if err := finishInstall(ctx, stdout, result, "devvault"); err != nil {
+			return err
 		}
 		if global {
 			_, err = fmt.Fprintf(stdout, "%s devvault globally for %s project %s in %s.\nStart a new %s session and check /mcp. The same project scope applies in every repository.\n", state, client, result.Project, result.Path, client)
@@ -277,13 +271,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	scope.AllowWrites = allowWrites
+	if err := config.AddShared(scope, sharedPaths); err != nil {
+		return err
+	}
 	store, err := vault.New(scope)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
 	if command == "config check" {
-		_, err := fmt.Fprintf(stdout, "Configuration valid for project %s (%d shared grants).\n", scope.ProjectID, len(scope.SharedReadPaths))
+		_, err := fmt.Fprintf(stdout, "Configuration valid for project %s (%d shared grants).\n", scope.ProjectID, len(scope.SharedGrants()))
 		return err
 	}
 	server, maxFrameBytes := mcpserver.New(store), mcpserver.MaxFrameBytes
@@ -298,6 +295,52 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return errors.New("MCP stdio session failed")
 	}
 	return nil
+}
+
+func finishInstall(ctx context.Context, out io.Writer, result install.Result, serverName string) error {
+	if result.InstructionsPath != "" {
+		state := "Agent instructions already current"
+		if result.InstructionsChanged {
+			state = "Updated agent instructions"
+		}
+		if _, err := fmt.Fprintf(out, "%s: %s.\n", state, result.InstructionsPath); err != nil {
+			return err
+		}
+	} else if _, err := fmt.Fprintln(out, "No source repository selected; agent instruction files unchanged."); err != nil {
+		return err
+	}
+	indexRead, err := install.Verify(ctx, result)
+	if err != nil {
+		return fmt.Errorf("connection saved in %s, but verification failed for %s; fix the error and rerun install: %w", result.Path, result.Project, err)
+	}
+	access := "six read tools"
+	if result.AllowWrites {
+		access += " plus document_create and document_update"
+	}
+	if _, err := fmt.Fprintf(out, "Verified MCP stdio startup and %s for %s (SDK check; no vault writes).\n", access, result.Project); err != nil {
+		return err
+	}
+	for _, shared := range result.SharedPaths {
+		mode := "read-only"
+		for _, writable := range result.SharedWritablePaths {
+			if shared == writable || strings.HasPrefix(shared, writable+"/") {
+				mode = "read and write"
+				break
+			}
+		}
+		if _, err := fmt.Fprintf(out, "Verified shared listing and available note retrieval: %s (%s; writes not exercised).\n", shared, mode); err != nil {
+			return err
+		}
+	}
+	if !indexRead {
+		_, err = fmt.Fprintln(out, "Index missing: project identity and retrieval could not be verified. Add index.md and rerun install.")
+	} else {
+		if _, err = fmt.Fprintf(out, "Verified project identity and read %s.\n", result.IndexPath); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(out, "\nAfter starting a new client session, paste this into the agent conversation:\n  Use only the %s MCP tools for this check. Call project_context and confirm\n  the project is %s, then read %s.\n  Report the source path and actual result. Do not edit files or use shell or\n  filesystem tools as a fallback if MCP is unavailable.\n\n", serverName, result.Project, result.IndexPath)
+	}
+	return err
 }
 
 func reportSkipped(out io.Writer, skipped []install.SkippedProject) error {

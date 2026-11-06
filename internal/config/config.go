@@ -11,8 +11,8 @@ import (
 	"sort"
 	"strings"
 
-	"go.yaml.in/yaml/v3"
 	"github.com/jsainthilaire/vault-bridge/internal/scope"
+	"go.yaml.in/yaml/v3"
 )
 
 const (
@@ -50,8 +50,11 @@ type Scope struct {
 	ProjectID       string
 	ProjectRoot     string
 	SharedReadPaths []string
-	Limits          Limits
-	AllowWrites     bool
+	// SharedPaths are explicit --shared grants: readable by default and writable
+	// when AllowWrites is enabled. Legacy SharedReadPaths never enable writes.
+	SharedPaths []string
+	Limits      Limits
+	AllowWrites bool
 }
 
 type project struct {

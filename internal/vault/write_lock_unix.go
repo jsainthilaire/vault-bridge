@@ -14,10 +14,10 @@ import (
 func openProjectWriteLock(root *os.Root) (*os.File, error) {
 	before, err := root.Lstat(writeLockName)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, scope.FSError(err, "inspect project write lock")
+		return nil, scope.FSError(err, "inspect write lock")
 	}
 	if err == nil && !before.Mode().IsRegular() {
-		return nil, scope.Err("permission_denied", "project write lock must be a regular file")
+		return nil, scope.Err("permission_denied", "write lock must be a regular file")
 	}
 	// Open existing locks without O_CREATE. Creating exclusively and retrying
 	// after EEXIST keeps simultaneous first writers on the same lock inode.
@@ -33,12 +33,12 @@ func openProjectWriteLock(root *os.Root) (*os.File, error) {
 		}
 	}
 	if err != nil {
-		return nil, scope.FSError(err, "open project write lock")
+		return nil, scope.FSError(err, "open write lock")
 	}
 	opened, err := file.Stat()
 	if err != nil || !opened.Mode().IsRegular() || (before != nil && !os.SameFile(before, opened)) {
 		file.Close()
-		return nil, scope.Err("permission_denied", "project write lock changed during access")
+		return nil, scope.Err("permission_denied", "write lock changed during access")
 	}
 	return file, nil
 }
@@ -57,7 +57,7 @@ func lockWriteFile(ctx context.Context, file *os.File) error {
 			return nil
 		}
 		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) && !errors.Is(err, syscall.EINTR) {
-			return scope.FSError(err, "lock project writes")
+			return scope.FSError(err, "lock Markdown writes")
 		}
 		if err := waitForWriteLock(ctx); err != nil {
 			return err

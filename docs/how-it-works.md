@@ -25,7 +25,7 @@ Vault Bridge runs the requested file operations and returns the results.
 
 | Component | Responsibility | Where it lives |
 | --- | --- | --- |
-| Installer (`vault-bridge install`) | Validates the selected notes and saves a launch command in the chosen client's settings, then exits. | The executable you built or installed |
+| Installer (`vault-bridge install`) | Validates the scope, saves the launch command, maintains source-repository agent guidance and runs a read-only SDK connection check, then exits. | The executable you built or installed |
 | Client settings | Record the executable, `serve` arguments and server name. | Repository or user configuration; see [locations](setup.md#where-to-run-the-server) |
 | Codex or Claude Code | Hosts the conversation, manages MCP connections and applies client tool permissions. | Your coding client |
 | Agent/model | Chooses relevant tools and uses their results to answer or implement your request. | The client's model session |
@@ -56,7 +56,7 @@ flowchart LR
         Scope <--> Store["Bounded Markdown access"]
     end
     Store <-->|Read and optional project writes| Notes["Selected project notes"]
-    Shared["Explicit shared grants"] -->|Read only| Store
+    Shared["Explicit shared grants"] -->|Read; optional writes via --shared| Store
     Editor["Obsidian or text editor"] <-->|Edit files directly| Notes
 ```
 
@@ -135,10 +135,10 @@ successive calls; installation is not repeated for each question.
 
 **Automatic startup makes tools available; it does not read all your notes.**
 The agent chooses calls based on the task, tool descriptions and instructions.
-Merge the [knowledge workflow](setup.md#agent-knowledge-workflow) into your
-repository's instruction file to make consultation an explicit expectation.
+The installer adds the [knowledge workflow](setup.md#agent-knowledge-workflow)
+to the selected source repository's instruction file in a managed block.
+Global installation without a source repository leaves instructions unchanged.
 Confirm actual use by inspecting the tool calls and returned source paths.
-Installing Vault Bridge does not write those instructions for you.
 
 For client-specific configuration and approval details, see the official
 [Codex MCP guide](https://learn.chatgpt.com/docs/extend/mcp) and
@@ -175,7 +175,8 @@ flowchart TB
 The client can use both connections from any repository. A call on
 `devvault-alpha` can access alpha's notes; accessing beta requires calling
 `devvault-beta`. Server identity stays fixed even if a tool argument mentions
-another project. Bulk targets grant no shared knowledge access.
+another project. Bulk targets grant shared access only when explicitly supplied
+with `--shared`.
 
 Source folders are used only to choose installations and report the mapping;
 source files are not exposed through the bridge. Matched connections remain
@@ -259,6 +260,9 @@ examples. Malformed YAML is an error rather than silently ignored metadata.
 
 ## Everyday use
 
+See [use cases and prompts](use-cases.md) for starting a session, planning a
+feature, reviewing progress and using shared references.
+
 Keep the agent instructions in your code repository so new sessions know to
 consult the vault. Start with `project_context`, search for relevant topics,
 then read the actual source notes before planning or changing code.
@@ -299,10 +303,11 @@ arguments usually name a **project-relative** subtree:
 | Search a granted Go topic | `query: "context cancellation", section: "shared:05-Knowledge/Go"` |
 | Read a granted shared note | `path: "05-Knowledge/Go/context.md"` |
 
-`--target` grants only the selected project and uses default limits. To enable a
-shared topic, use a [YAML mapping](reference.md#configuration) with an explicit
-`shared_read_paths` entry. The shared selector must match that grant exactly.
-Shared content remains read-only even when project writes are enabled.
+`--target` selects one project and uses default limits. Add `--shared 05-Knowledge`
+or a narrower folder to grant shared access; these folders become writable with
+`--allow-writes`. A [YAML mapping](reference.md#configuration) can also declare
+read-only `shared_read_paths`, which remain read-only unless explicitly covered
+by `--shared`. The shared list/search selector must exactly match a grant.
 
 Each process has one scope. Another code repository can reuse the same binary
 with a different launch target. A global connection keeps the same selected
@@ -351,9 +356,10 @@ vault directly. Restart the client session after changing server arguments,
 project targets or client settings. Rebuild and restart after changing bridge code.
 
 **Does install fill in my plans or agent instructions?** It registers the
-connection only. Initialization creates missing note structure; you author the
-content and merge the [agent workflow](setup.md#agent-knowledge-workflow) into
-your repository's instruction file.
+connection, adds managed agent guidance when a source repository is selected,
+and performs a read-only SDK connection check. It preserves authored guidance
+outside its marked section. Initialization creates missing vault note structure;
+you author the note content.
 
 **Can I move the binary, vault or code repository?** Settings contain absolute
 paths. Update the relevant paths and restart the client. Project-local settings

@@ -1,187 +1,255 @@
 # Vault Bridge
 
-Give your coding agent access to your project's Markdown plans, requirements and
-decisions. Keep those notes in an Obsidian vault and your implementation in its
-own code repository. Vault Bridge connects them through a local MCP server.
+**Connect your coding agent to the project knowledge in your Markdown vault.**
 
-Each server process serves one selected project. Reads are enabled by default;
-project Markdown writes require `--allow-writes`. Obsidian is optional, and the
-bridge needs no plugin, database, network listener or separate API key.
+Vault Bridge lets Codex or Claude Code find and read the plans, requirements,
+and decisions you keep in Obsidian or ordinary Markdown files. Your agent can use
+those notes while working in your code repository. With writes enabled, it can
+also record verified progress back in the vault.
 
-## Start here
+Use it when your project knowledge lives outside your source repository and you
+want it available in coding sessions without copying notes into each prompt.
+You keep editing the same files; the bridge reads their current saved contents.
 
-| You want to… | Read |
+[How it works](#how-it-works) · [Quick start](#quick-start) ·
+[Use cases and prompts](docs/use-cases.md) · [Full setup](docs/setup.md)
+
+## How it works
+
+You talk to **Codex or Claude Code**. That client starts **Vault Bridge** locally
+and makes its tools available to the agent through MCP (Model Context Protocol).
+The agent uses the bridge to consult your notes and its normal coding tools to
+work on your repository.
+
+```mermaid
+flowchart TB
+    You["You<br/>Ask for a feature, explanation, or progress review"]
+    Agent["Codex or Claude Code<br/>Agent and MCP client"]
+    Code["Your code repository<br/>Source code, tests, and agent instructions"]
+    Bridge["Vault Bridge<br/>Local MCP server bound to one project"]
+    subgraph Vault["Your Markdown vault"]
+        Notes["Selected project: 03-Projects/my-app<br/>Requirements, architecture, roadmap, decisions"]
+        Shared["Optional shared references<br/>For example: 05-Knowledge/Go"]
+    end
+    Editor["Obsidian or a text editor"]
+
+    You --> Agent
+    Agent <-->|"Read code, make changes, run tests"| Code
+    Agent <-->|"Search and read notes through MCP"| Bridge
+    Bridge <-->|"Read; update when writes are enabled"| Notes
+    Bridge -.->|"Access only with an explicit shared grant"| Shared
+    Editor <-->|"Edit the same Markdown files"| Notes
+```
+
+1. **Connect once.** Run `install` to save the project connection and add guidance
+   to your repository's `AGENTS.md` or `CLAUDE.md`. The installer checks that the
+   saved server command can start and retrieve notes.
+2. **Ask for work.** In a new coding session, the client starts the bridge. The
+   agent can search and read relevant notes, then use them while changing code.
+3. **Keep the record current.** Edit notes yourself, or enable `--allow-writes`
+   so the agent can update them after checking the work. Note updates check the
+   saved revision to avoid overwriting a newer edit.
+
+Each bridge process stays bound to one project. Shared folders require explicit
+`--shared` grants. **Access is read-only by default.** The bridge exposes Markdown
+notes; code edits and test runs happen through your agent's other tools.
+
+The bridge runs locally, while your coding client controls which retrieved
+content it sends to its model provider. Installing a connection makes the tools
+available; the agent chooses which notes to read for each task. See the
+[detailed request flow](docs/how-it-works.md) and [access boundaries](docs/reference.md#security-boundaries).
+
+### A feature request, from notes to code
+
+Suppose your vault contains password-reset requirements and an authentication
+decision record. In your coding client, ask:
+
+```text
+Use devvault to read the password-reset requirements and authentication decisions.
+Implement the feature in this repository and run the relevant tests. Cite the
+notes you used and report what you verified.
+```
+
+The agent retrieves the notes through Vault Bridge, inspects the current code,
+and implements the change in your repository. With writes enabled, the generated
+agent guidance also asks it to update affected project notes with the outcome.
+The tests and recorded evidence determine what can be marked complete.
+
+## What you can use it for
+
+| When you want to… | Ask your agent to… |
 | --- | --- |
-| Set up a vault or connect your first project | [Setup](docs/setup.md) |
-| Understand the connection and use it day to day | [How it works](docs/how-it-works.md) |
-| Check commands, configuration, tools or security limits | [Reference](docs/reference.md) |
-| Fix a connection, path or write error | [Troubleshooting](docs/troubleshooting.md) |
-| Run tests or the SDK verification helper | [Development and diagnostics](docs/development.md) |
+| Resume a project after a break | Read the overview and roadmap, then identify the next unfinished milestone. |
+| Implement a feature | Read its requirements and relevant decisions before proposing code changes. |
+| Understand an earlier choice | Search the decision records and cite the notes that explain it. |
+| Check progress | Compare the roadmap with code and test evidence, then report the gaps. |
+| Reuse knowledge across projects | Consult a shared folder you explicitly granted, such as `05-Knowledge/Go`. |
+| Keep plans current after shipping | Update the relevant notes with verified results when writes are enabled. |
 
-For visual walkthroughs, see the [component graph](docs/how-it-works.md#request-flow),
-[automatic startup sequence](docs/how-it-works.md#automatic-startup-and-tool-discovery)
-and [bulk project connections](docs/how-it-works.md#how-bulk-global-connections-work).
-The reference includes [command](docs/reference.md#command-reference) and
-[flag tables](docs/reference.md#flags-and-defaults), with defaults and valid combinations.
+See [ready-to-paste prompts](docs/use-cases.md) for each workflow.
+
+If all your documentation already lives in the repository and your agent reads
+it directly, you may not need a separate bridge. Obsidian is optional; the vault
+is a folder of Markdown files with projects under `03-Projects/`.
 
 ## Quick start
 
-To create a vault for a new project in an empty or missing folder, build the CLI
-with `make build`, then run:
+Start by connecting **one code repository to one project's notes**. You need
+Go 1.25+, `make`, this checkout, and an installed, signed-in Codex or Claude Code
+client. These commands target macOS and Linux.
+
+### 1. Build and choose your folders
+
+Clone the repository if you do not have it yet:
 
 ```sh
-./.bin/vault-bridge vault init --path /absolute/path/to/MyVault \
-  --id my-project --title "My Project"
+git clone https://github.com/jsainthilaire/vault-bridge.git
+cd vault-bridge
 ```
 
-This adds the project's planning notes under `03-Projects/my-project`, a dashboard,
-and reusable templates. Template sources are kept in [`templates/`](templates/README.md).
-Follow the [setup guide](docs/setup.md#step-by-step-setup) to connect your agent.
-
-Use this path when your project's notes already exist under
-`<vault>/03-Projects/my-project`. For a new vault or project, follow the
-[full setup guide](docs/setup.md#step-by-step-setup), which includes initialization.
-
-You need Go 1.25+, `make`, this source checkout, and an installed, signed-in Codex
-or Claude Code client. The documented setup and project writes target macOS and
-Linux. Python is only needed for contributor tests and the optional SDK helper.
-
-**1. Build and register your project.** Run from the Vault Bridge checkout and
-replace the example paths with your own:
+From the checkout, build the executable and replace the example paths below.
+Use the same terminal for the remaining commands:
 
 ```sh
-cd /absolute/path/to/vault-bridge
 make build
-
 BRIDGE_PATH="$PWD/.bin/vault-bridge"
 VAULT_PATH="/absolute/path/to/DevVault"
-AGENT_REPO="/absolute/path/to/my-project"
-PROJECT_ID="my-project"
+CODE_REPO="/absolute/path/to/my-app"
+PROJECT_ID="my-app"
+```
 
-"$BRIDGE_PATH" config check --target "$VAULT_PATH/03-Projects/$PROJECT_ID"
-"$BRIDGE_PATH" install "$AGENT_REPO" --client codex \
+Keep these locations separate:
+
+| Variable | Points to | Example |
+| --- | --- | --- |
+| `BRIDGE_PATH` | The executable your coding client will launch | `vault-bridge/.bin/vault-bridge` |
+| `CODE_REPO` | Your existing source repository, where you use the agent | `my-app/` |
+| `VAULT_PATH` | The Markdown vault containing `03-Projects` | `DevVault/` |
+| `PROJECT_ID` | The selected project's folder name inside `03-Projects` | `my-app` |
+
+For example, the notes and source code can live side by side:
+
+```text
+work/
+  vault-bridge/                   # This tool's source and executable
+  my-app/                         # Your project's code and tests
+  DevVault/                       # Open this folder in Obsidian, if you use it
+    03-Projects/
+      my-app/                     # Your project's notes
+        index.md
+        requirements.md
+        roadmap.md
+```
+
+Use a lowercase kebab-case ID, such as `my-app`. Your code folder can have a
+different name. Keep the executable at its registered location; see
+[installing it in a stable location](docs/setup.md#2-build-the-bridge-and-choose-your-paths).
+
+**If you already have project notes, skip initialization.** Otherwise, create
+planning templates before connecting:
+
+```sh
+"$BRIDGE_PATH" vault init --path "$VAULT_PATH" \
+  --id "$PROJECT_ID" --title "My App"
+```
+
+Initialization adds missing files and preserves existing notes. Fill in the
+project overview in `index.md` and the requirements you want your agent to use.
+The templates provide structure; they do not discover your project's requirements.
+See [what belongs in each note](docs/how-it-works.md#where-files-belong).
+
+### 2. Connect your coding client
+
+```sh
+"$BRIDGE_PATH" install "$CODE_REPO" --client codex \
   --target "$VAULT_PATH/03-Projects/$PROJECT_ID"
 ```
 
-Use `--client claude` for Claude Code. Your code repository must already exist.
-The target is the project's docs folder, directly inside `03-Projects`.
-Validation should report your project ID and `0 shared grants`.
+Use `--client claude` for Claude Code. Run once for each client if you use both.
+The installer:
 
-**2. Tell the agent when to consult the vault.** Merge the
-[project knowledge workflow](docs/setup.md#agent-knowledge-workflow) into your
-code repository's `AGENTS.md` for Codex or `CLAUDE.md` for Claude Code. Set its
-project ID to `my-project`, or the ID you chose. Preserve existing instructions.
+- Saves the `devvault` connection in the repository's client settings.
+- Adds a managed workflow to `AGENTS.md` or `CLAUDE.md`, preserving other content.
+- Checks MCP startup, available tools and index retrieval through the SDK.
 
-**3. Start a new client session from your code repository.**
+**Access starts read-only.** Installation creates no vault notes. The SDK check
+verifies the saved server command; the next step verifies your coding client.
 
-```sh
-cd "$AGENT_REPO"
-codex
-# Or: claude
-```
+### 3. Start a new session and try it
 
-Complete normal workspace trust and MCP approval steps. The client starts the
-bridge automatically. In the conversation, inspect `/mcp` and ask:
+Open your coding client in `CODE_REPO`, complete its trust and connection approvals,
+and use the verification prompt printed by the installer. For `my-app`, it is:
 
 ```text
-Use only the devvault MCP tools. Call project_context and confirm the active
-project is my-project, then read 03-Projects/my-project/roadmap.md.
-Report the source path and actual result. Do not edit files for this check.
+Use only the devvault MCP tools for this check. Call project_context and confirm
+the project is my-app, then read 03-Projects/my-app/index.md.
+Report the source path and actual result. Do not edit files or use shell or
+filesystem tools as a fallback if MCP is unavailable.
 ```
 
-Use your chosen ID in that prompt. Successful tool results establish that the
-connection works. Follow the [full retrieval and isolation check](docs/setup.md#6-verify-retrieval-and-project-isolation)
-for a more complete verification.
+Replace `my-app` if you chose another ID. A successful tool call with the correct
+project and source path confirms retrieval. Then try a useful task:
 
-## What gets connected
+```text
+Use devvault to read this project's requirements and roadmap.
+Summarize the goal, the open work, and the next useful task, with source paths.
+Do not change any files yet.
+```
 
-| Location | What it holds |
+The client starts Vault Bridge automatically; you do not need to run `serve` in
+another terminal. If retrieval fails, follow [Troubleshooting](docs/troubleshooting.md).
+
+## Choose your next step
+
+| You want to… | Setup |
 | --- | --- |
-| Vault Bridge checkout or installed executable | The Go program your client launches |
-| Your vault, such as `DevVault/03-Projects/my-project` | The project's Markdown knowledge |
-| Your project's code repository | Implementation, MCP connection settings and agent instructions |
+| Add notes for another project | [Initialize a project](docs/setup.md#3-initialize-missing-vault-or-project-files) |
+| Let the agent maintain project notes | [Enable writes](docs/setup.md#enable-project-writes-and-update-milestones) with `--allow-writes` |
+| Share reusable references | [Grant shared folders](docs/setup.md#share-knowledge-folders) with `--shared` |
+| Connect projects that match source-folder names | [Bulk source matching](docs/setup.md#match-vault-projects-to-source-folders) |
+| Register all projects in a vault | [Bulk global installation](docs/setup.md#install-every-project-globally) |
+| Use custom limits or project mappings | [YAML configuration](docs/reference.md#configuration) |
+| Change or remove an existing connection | [Connection maintenance](docs/setup.md#update-or-remove-a-connection) |
 
-The installer registers a server named `devvault` in your code repository:
-`.codex/config.toml` for Codex or `.mcp.json` for Claude Code. It records absolute
-paths to the binary and selected notes. Keep that binary available at the
-registered path. You can also [install the executable](docs/setup.md#2-build-the-bridge-and-choose-your-paths)
-in a stable location.
+With `--allow-writes`, the agent can create and update Markdown in the selected
+project and folders explicitly granted with `--shared`. Updates check the note's
+revision to avoid replacing a newer edit. Legacy YAML `shared_read_paths` remain
+read-only unless also covered by `--shared`.
 
-When the agent calls a tool, the client sends the request to its bridge process.
-The bridge checks the project's scope and returns bounded Markdown or search
-results from the vault. Edits in Obsidian are available on subsequent requests;
-there is no synchronization step. The client controls which returned content is
-sent to its model provider.
-
-The [how-it-works guide](docs/how-it-works.md) explains project isolation, shared
-knowledge, tool paths, daily prompts and write behavior.
-
-## How the server starts automatically
-
-`vault-bridge install` saves a launch command and exits. When you start your
-coding client and its MCP connection is enabled and approved, the client launches
-the saved executable with `serve` and the selected project arguments. Codex and
-Claude Code already include the MCP client that manages this connection.
-
-The agent learns which tools are available, then calls them as needed for your
-request. Repository instructions make consulting the vault an explicit workflow;
-installation alone does not load every note into the conversation. Inspect
-`/mcp` and ask for `project_context` to verify retrieval. See the
-[startup walkthrough](docs/setup.md#where-to-run-the-server) for settings locations,
-client inspection commands and examples for bulk connections.
-
-## Let the agent update project notes
-
-Add `--allow-writes` to a **new** connection's install command to enable
-`document_create` and `document_update`. For an existing connection, add the flag
-to the server's saved arguments and restart the client; rerunning the installer
-with different arguments reports a conflict rather than replacing settings.
-
-Ask the agent to update a milestone only after checking implementation and test
-evidence. It must read the complete note and its revision, preserve unrelated
-content, and reread/merge if another update changed the revision. Shared
-knowledge remains read-only. See [write setup and conflict handling](docs/setup.md#enable-project-writes-and-update-milestones).
-
-## Connect more projects
-
-Run the installer for each code repository with that project's docs target.
-Each client process keeps its own selected scope while using the same binary.
-Use [YAML configuration](docs/reference.md#configuration) for custom limits or
-explicit read access to shared knowledge subtrees.
-
-Use [global installation](docs/setup.md#global-installation) when you want the
-**same selected project** available across repositories. Global registration
-keeps that identity fixed; it does not choose a project from the working directory.
-
-To register every existing project globally in one command:
+For example, when installing a new connection with Go references and note updates:
 
 ```sh
-"$BRIDGE_PATH" install --global --client codex \
-  --projects-dir "$VAULT_PATH/03-Projects"
+"$BRIDGE_PATH" install "$CODE_REPO" --client codex \
+  --target "$VAULT_PATH/03-Projects/$PROJECT_ID" \
+  --shared 05-Knowledge/Go --allow-writes
 ```
 
-Use `--client claude` for Claude Code. `--global` is required, with no prior global
-setup needed. Each immediate project folder gets its own `devvault-<project-id>`
-connection. All registered projects are available across repositories, with each
-server bound to one project. Validation completes before client settings change.
-See [bulk global setup](docs/setup.md#install-every-project-globally) for folder
-rules, conflicts, and optional writes.
+The shared folder must already exist. For an existing read-only connection, follow
+[the write-enablement steps](docs/setup.md#enable-project-writes-and-update-milestones)
+before changing launch options. Rerunning install can add shared grants, but it
+does not silently replace a connection with different write permissions.
 
-To install only projects that also have a same-named source folder, add
-`--source-dir`:
+Bulk installations create `devvault-<project-id>` connections in user settings.
+All registered connections are available across repositories; each keeps its own
+project scope. Source matching selects connections to install, not which server
+the client can use in a given repository.
 
-```sh
-"$BRIDGE_PATH" install --global --client codex \
-  --projects-dir "$VAULT_PATH/03-Projects" \
-  --source-dir "/absolute/path/to/source-projects"
-```
+## Documentation
 
-This matches immediate folders by exact, case-sensitive name and requires an
-existing `index.md` in each matched vault project. It reports unmatched folders
-and missing indexes, and creates no documentation or source-repository settings.
-All matched connections are globally available; existing unmatched connections
-remain installed. See [source matching](docs/setup.md#match-vault-projects-to-source-folders).
+| Guide | What you will find |
+| --- | --- |
+| [Use cases](docs/use-cases.md) | Everyday workflows, prompts and expected results |
+| [Setup](docs/setup.md) | Client configuration, bulk connections, optional writes and maintenance |
+| [How it works](docs/how-it-works.md) | Startup diagrams, file layout and project scope |
+| [Reference](docs/reference.md) | Commands, flags, MCP tools and resource limits |
+| [Troubleshooting](docs/troubleshooting.md) | Connection, path and write errors |
+| [Development](docs/development.md) | Tests and SDK verification helpers |
 
-Vault Bridge's scope applies to its own MCP tools. Your agent's separate shell
-or filesystem access follows its client and OS permissions. Read the
-[security boundaries](docs/reference.md#security-boundaries) when choosing grants.
+For examples in your terminal, run `.bin/vault-bridge --help` or
+`.bin/vault-bridge install --help`.
+
+## Licence
+
+Vault Bridge is free and open source under the [MIT licence](LICENCE).
+Anyone may use, modify and redistribute it, including commercially, as long as
+the copyright and permission notice is retained. See the licence for full terms.

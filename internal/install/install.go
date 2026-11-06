@@ -1,5 +1,5 @@
 // Package install adds an MCP connection bound to one project to a coding client.
-// It never initializes or changes vault notes or agent instruction files.
+// It maintains project agent guidance but never initializes or changes vault notes.
 package install
 
 import (
@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -26,14 +27,23 @@ type Options struct {
 	Client, Repo, Config, Project, Target, Binary string
 	ProjectsDir, SourceDir                        string
 	Global, AllowWrites                           bool
+	SharedPaths                                   []string
 }
 
 type Result struct {
-	Path    string
-	Project string
-	Changed bool
-	Source  string // Matched source folder, populated only with --source-dir.
-	Target  string // Absolute vault project folder for bulk installations.
+	Path                string
+	Project             string
+	Changed             bool
+	Source              string // Matched source folder, populated only with --source-dir.
+	Target              string // Absolute vault project folder for bulk installations.
+	InstructionsPath    string
+	InstructionsChanged bool
+	Binary              string
+	Args                []string
+	IndexPath           string
+	AllowWrites         bool
+	SharedPaths         []string // All readable shared selectors, including YAML grants.
+	SharedWritablePaths []string // Explicit CLI grants when AllowWrites is enabled.
 }
 
 // Project validates the explicit vault mapping before touching client settings.
@@ -63,10 +73,20 @@ func Project(o Options) (Result, error) {
 	if err != nil {
 		return result, err
 	}
+	if err := config.AddShared(cfg, o.SharedPaths); err != nil {
+		return result, err
+	}
 	result.Project = cfg.ProjectID
 	binary, err := executable(o.Binary)
 	if err != nil {
 		return result, err
+	}
+	var instructions *instructionEdit
+	if !o.Global {
+		instructions, err = prepareInstructions(o.Repo, o.Client, "devvault", cfg.ProjectID, cfg.VaultRoot, o.AllowWrites)
+		if err != nil {
+			return result, err
+		}
 	}
 	var root *os.Root
 	var absolute, name string
@@ -115,6 +135,15 @@ func Project(o Options) (Result, error) {
 	if o.AllowWrites {
 		args = append(args, "--allow-writes")
 	}
+	args, err = sharedLaunchArgs(before, o.Client, "devvault", binary, args, cfg)
+	if err != nil {
+		return result, err
+	}
+	if instructions != nil {
+		if err := instructions.setShared(cfg, o.AllowWrites); err != nil {
+			return result, err
+		}
+	}
 	var after []byte
 	if o.Client == "codex" {
 		after, err = mergeCodex(before, binary, args)
@@ -124,16 +153,26 @@ func Project(o Options) (Result, error) {
 	if err != nil {
 		return result, err
 	}
-	if bytes.Equal(before, after) {
-		return result, nil
-	}
 	if len(after) > maxConfigBytes {
 		return result, errors.New("client configuration would exceed 1048576 bytes")
 	}
-	if err := writeConfig(root, name, before, after, mode, exists); err != nil {
-		return result, err
+	result.Binary, result.Args = binary, args
+	result.IndexPath, result.AllowWrites = cfg.ProjectRoot+"/index.md", o.AllowWrites
+	result.SharedPaths = cfg.SharedGrants()
+	if o.AllowWrites {
+		result.SharedWritablePaths = append([]string(nil), cfg.SharedPaths...)
 	}
-	result.Changed = true
+	if !bytes.Equal(before, after) {
+		if err := writeConfig(root, name, before, after, mode, exists); err != nil {
+			return result, err
+		}
+		result.Changed = true
+	}
+	if instructions != nil {
+		if err := instructions.apply(&result); err != nil {
+			return result, fmt.Errorf("connection saved, but agent instructions failed; fix the error and rerun install: %w", err)
+		}
+	}
 	return result, nil
 }
 
@@ -162,6 +201,22 @@ func mergeCodexNamed(before []byte, server, binary string, args []string) ([]byt
 			return nil, errors.New("Codex mcp_servers must be a table")
 		}
 		if existing, ok := table[server]; ok {
+			// Per-tool policy belongs to the client/user, not the installer.
+			// Preserve it verbatim when the installed launch settings match.
+			if fields, ok := existing.(map[string]any); ok {
+				fields = maps.Clone(fields)
+				existing = fields
+				if _, ok := fields["tools"].(map[string]any); ok {
+					delete(fields, "tools")
+				}
+				want := desired["mcp_servers"].(map[string]any)[server].(map[string]any)
+				if extra, ok := sharedArgsExtension(fields["args"], want["args"]); ok {
+					fields["args"] = want["args"]
+					if reflect.DeepEqual(fields, want) {
+						return appendCodexShared(before, server, extra)
+					}
+				}
+			}
 			if reflect.DeepEqual(existing, desired["mcp_servers"].(map[string]any)[server]) {
 				return before, nil
 			}
@@ -208,11 +263,20 @@ func mergeClaudeNamed(before []byte, server, binary string, args []string) ([]by
 		return nil, err
 	}
 	if existing, ok := servers[server]; ok {
-		var a, b any
-		if json.Unmarshal(existing, &a) == nil && json.Unmarshal(entry, &b) == nil && reflect.DeepEqual(a, b) {
+		var a, b map[string]any
+		if json.Unmarshal(existing, &a) != nil || json.Unmarshal(entry, &b) != nil {
+			return nil, namedConflict(server)
+		}
+		if reflect.DeepEqual(a, b) {
 			return before, nil
 		}
-		return nil, namedConflict(server)
+		if _, ok := sharedArgsExtension(a["args"], b["args"]); !ok {
+			return nil, namedConflict(server)
+		}
+		a["args"] = b["args"]
+		if !reflect.DeepEqual(a, b) {
+			return nil, namedConflict(server)
+		}
 	}
 	servers[server] = entry
 	current["mcpServers"], err = json.Marshal(servers)

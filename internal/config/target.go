@@ -10,7 +10,7 @@ import (
 
 // FromTarget binds a project directly from a trusted launch path instead of a
 // YAML map. Only the explicitly selected project folder is granted; default
-// resource limits apply and shared access remains empty. Relative paths are
+// resource limits apply and shared access remains empty until AddShared is called. Relative paths are
 // resolved against the installer's/server's cwd, never an MCP client root.
 func FromTarget(target, id string) (*Scope, error) {
 	if target == "" || strings.ContainsRune(target, 0) {

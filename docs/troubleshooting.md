@@ -14,7 +14,7 @@ that the client connected. See [Setup](setup.md) for the verification prompt.
 | `project_context` returns the wrong project | Align the launch target or YAML mapping, `--project` ID, and agent instruction file; then restart the session. |
 | A document read returns `permission_denied` | Use a vault-relative path within the active project or an explicit shared grant. Symlinks, hidden files, and attachments remain excluded. |
 | A note fails with `invalid_argument` | Check its YAML frontmatter and the tool arguments. Note contents are omitted from diagnostics. |
-| Agent does not consult notes automatically | Merge the workflow into the correct `AGENTS.md` or `CLAUDE.md`, start a new session, and explicitly request `project_context` to verify access. |
+| Agent does not consult notes automatically | Rerun the project-local or source-matched installer to refresh the managed `AGENTS.md` or `CLAUDE.md` block, then start a new session and request `project_context`. Global installs without a source repository require manual guidance. |
 | Manual demo cannot find `agent-rig` | Supply your own `--project` and `--denied-project` IDs, as shown in the setup guide. |
 | Paths stopped working after moving folders | Update the client's executable and target paths. With YAML, also update `vault_root` and the config-file path. Restart the client. |
 | `install` reports that `devvault` already exists | Preserve other servers, remove only the old `devvault` entry, and reinstall with your chosen connection form. |
@@ -23,7 +23,7 @@ that the client connected. See [Setup](setup.md) for the verification prompt.
 | An old global project still appears after filtering | Source matching adds eligible connections and preserves existing entries. Remove the specific old `devvault-<id>` entry manually if it is no longer wanted. |
 | Write tools are missing | Append `--allow-writes` to the installed server arguments and restart the client. Rebuilding the executable alone does not change launch permissions. |
 | A write returns `conflict` | For updates, reread and merge using the latest revision. For creates, choose a new path or read and update the existing note. |
-| A write returns `permission_denied` | Enable project writes at launch and use an existing parent inside the active project. Shared knowledge and symlink paths cannot be written. |
+| A write returns `permission_denied` | Enable `--allow-writes` and use an existing parent inside the active project or an explicit `--shared` folder. YAML-only read grants and symlink paths cannot be written. |
 | Manual `serve` appears to hang | It is waiting for MCP input over stdin. Use `install` and let the client launch it automatically for normal use. |
 
 Connection-file inspection and SDK checks are useful diagnostics. Verify actual

@@ -72,7 +72,7 @@ func TestProjectInstallation(t *testing.T) {
 		for _, existing := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/existing=%v", client, existing), func(t *testing.T) {
 				o := fixture(t, client)
-				// Instruction files are authored content and must remain untouched.
+				// Preserve authored content while managing only the selected client's block.
 				put(t, filepath.Join(o.Repo, "AGENTS.md"), "Keep these instructions\n")
 				put(t, filepath.Join(o.Repo, "CLAUDE.md"), "Keep Claude instructions\n")
 				original := ""
@@ -130,8 +130,15 @@ func TestProjectInstallation(t *testing.T) {
 				if err != nil || result.Changed || !bytes.Equal(data, read(t, target(o))) {
 					t.Fatalf("repeat install changed settings: %+v %v", result, err)
 				}
-				if string(read(t, filepath.Join(o.Repo, "AGENTS.md"))) != "Keep these instructions\n" || string(read(t, filepath.Join(o.Repo, "CLAUDE.md"))) != "Keep Claude instructions\n" {
-					t.Fatal("modified agent instructions")
+				for file, authored := range map[string]string{"AGENTS.md": "Keep these instructions\n", "CLAUDE.md": "Keep Claude instructions\n"} {
+					got := string(read(t, filepath.Join(o.Repo, file)))
+					if file == instructionName(client) {
+						if !strings.HasPrefix(got, authored) || strings.Count(got, instructionStart) != 1 || !strings.Contains(got, "`vault-bridge`") {
+							t.Fatal("missing managed instructions or lost authored content")
+						}
+					} else if got != authored {
+						t.Fatal("modified the other client's instructions")
+					}
 				}
 			})
 		}
@@ -162,6 +169,9 @@ func TestInvalidSettingsArePreserved(t *testing.T) {
 			}
 			if string(read(t, target(o))) != tc.text {
 				t.Fatal("changed invalid or conflicting configuration")
+			}
+			if _, err := os.Stat(filepath.Join(o.Repo, instructionName(o.Client))); !os.IsNotExist(err) {
+				t.Fatalf("changed instructions despite conflicting settings: %v", err)
 			}
 		})
 	}

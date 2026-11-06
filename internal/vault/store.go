@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -33,9 +34,10 @@ const (
 )
 
 type grant struct {
-	path string
-	root *os.Root
-	info fs.FileInfo
+	path     string
+	root     *os.Root
+	info     fs.FileInfo
+	writable bool
 }
 
 // Store keeps one descriptor per authorized root. The handles keep reads
@@ -73,11 +75,16 @@ func New(cfg *config.Scope) (*Store, error) {
 	s := &Store{scope: *cfg, vault: vault}
 	s.scope.VaultRoot = canonical
 	s.scope.SharedReadPaths = append([]string(nil), cfg.SharedReadPaths...)
+	s.scope.SharedPaths = append([]string(nil), cfg.SharedPaths...)
+	if err := config.AddShared(&s.scope, nil); err != nil {
+		vault.Close()
+		return nil, err
+	}
 	if _, err := rand.Read(s.cursorKey[:]); err != nil {
 		vault.Close()
 		return nil, scope.Err("internal_error", "cannot initialize pagination")
 	}
-	names := append([]string{cfg.ProjectRoot}, cfg.SharedReadPaths...)
+	names := append([]string{cfg.ProjectRoot}, s.scope.SharedGrants()...)
 	for i, name := range names {
 		parent := "03-Projects"
 		if i > 0 {
@@ -87,7 +94,8 @@ func New(cfg *config.Scope) (*Store, error) {
 			s.Close()
 			return nil, err
 		}
-		if !scope.Visible(name) || name == parent || !scope.Beneath(parent, name) {
+		allowKnowledgeRoot := i > 0 && name == "05-Knowledge" && slices.Contains(s.scope.SharedPaths, name)
+		if !scope.Visible(name) || (name == parent && !allowKnowledgeRoot) || !scope.Beneath(parent, name) {
 			s.Close()
 			return nil, scope.Err("permission_denied", "scope must name an explicit visible project or knowledge subtree")
 		}
@@ -106,7 +114,7 @@ func New(cfg *config.Scope) (*Store, error) {
 			s.Close()
 			return nil, scope.FSError(err, "inspect scope")
 		}
-		s.grants = append(s.grants, grant{path: name, root: root, info: info})
+		s.grants = append(s.grants, grant{path: name, root: root, info: info, writable: cfg.AllowWrites && (i == 0 || slices.Contains(s.scope.SharedPaths, name))})
 	}
 	return s, nil
 }
@@ -248,7 +256,7 @@ func (s *Store) section(section string) (grant, string, string, error) {
 				return g, ".", section, nil
 			}
 		}
-		return grant{}, "", "", scope.Err("permission_denied", "shared section must exactly match an explicit shared_read_paths grant")
+		return grant{}, "", "", scope.Err("permission_denied", "shared section must exactly match an explicit shared grant")
 	}
 	if err := scope.RelativePath(section); err != nil {
 		return grant{}, "", "", err

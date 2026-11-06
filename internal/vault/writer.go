@@ -24,15 +24,16 @@ func documentRevision(markdown string) string {
 	return hex.EncodeToString(digest[:])
 }
 
-// Create adds one project Markdown note without replacing any existing entry.
-// Its parent directory must already exist. Shared grants are always read-only.
+// Create adds one authorized Markdown note without replacing an existing entry.
+// Shared writes require both --shared and --allow-writes. Parents must exist.
 func (s *Store) Create(ctx context.Context, name, markdown string) (*WriteResult, error) {
 	return s.write(ctx, name, markdown, "", false)
 }
 
 // Update replaces a project Markdown note only when its complete content still
 // matches expectedRevision from document_read. It never truncates in place.
-// Bridge writers share a project lock. External editors must not modify notes
+// Project writers share a project-root lock; shared writers lock the note parent.
+// External editors must not modify notes
 // during a write: ordinary filesystems provide no atomic content-hash CAS.
 func (s *Store) Update(ctx context.Context, name, markdown, expectedRevision string) (*WriteResult, error) {
 	if len(expectedRevision) != sha256.Size*2 || strings.Trim(expectedRevision, "0123456789abcdef") != "" {
@@ -81,8 +82,17 @@ func (s *Store) write(ctx context.Context, name, markdown, expectedRevision stri
 		return nil, err
 	}
 	g := s.grants[0]
+	sharedWrite := false
+	if s.scope.CanWriteShared(name) {
+		for _, candidate := range s.grants[1:] {
+			if candidate.writable && name != candidate.path && scope.Beneath(candidate.path, name) {
+				g, sharedWrite = candidate, true
+				break
+			}
+		}
+	}
 	if !scope.Visible(name) || !strings.EqualFold(path.Ext(name), ".md") || name == g.path || !scope.Beneath(g.path, name) {
-		return nil, scope.Err("permission_denied", "writes require a visible Markdown path within the active project")
+		return nil, scope.Err("permission_denied", "writes require a visible Markdown path within the active project or a writable shared folder")
 	}
 	if len(markdown) > s.scope.Limits.MaxDocumentBytes {
 		return nil, scope.Err("resource_limit", "Markdown exceeds max_document_bytes")
@@ -104,7 +114,7 @@ func (s *Store) write(ctx context.Context, name, markdown, expectedRevision stri
 	}
 	rel, err := filepath.Rel(filepath.FromSlash(g.path), filepath.FromSlash(name))
 	if err != nil {
-		return nil, scope.Err("invalid_argument", "cannot resolve project write path")
+		return nil, scope.Err("invalid_argument", "cannot resolve authorized write path")
 	}
 	rel = filepath.ToSlash(rel)
 	parentName, base := path.Dir(rel), path.Base(rel)
@@ -120,7 +130,14 @@ func (s *Store) write(ctx context.Context, name, markdown, expectedRevision stri
 	if err != nil {
 		return nil, scope.FSError(err, "inspect write directory")
 	}
-	lock, err := acquireProjectWriteLock(ctx, g.root)
+	lockRoot := g.root
+	if sharedWrite {
+		// The destination parent is identical even when separate processes grant
+		// 05-Knowledge and 05-Knowledge/Go. A grant-root lock would not coordinate
+		// these overlapping grants and could lose updates to the same document.
+		lockRoot = parent
+	}
+	lock, err := acquireProjectWriteLock(ctx, lockRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +295,7 @@ func acquireProjectWriteLock(ctx context.Context, root *os.Root) (*projectWriteL
 	info, err := file.Stat()
 	if err != nil {
 		file.Close()
-		return nil, scope.FSError(err, "inspect project write lock")
+		return nil, scope.FSError(err, "inspect write lock")
 	}
 	lock := &projectWriteLock{root: root, file: file, info: info}
 	if err := lock.check(); err != nil {
@@ -299,10 +316,10 @@ func acquireProjectWriteLock(ctx context.Context, root *os.Root) (*projectWriteL
 func (l *projectWriteLock) check() error {
 	info, err := l.root.Lstat(writeLockName)
 	if err != nil {
-		return scope.FSError(err, "recheck project write lock")
+		return scope.FSError(err, "recheck write lock")
 	}
 	if !l.info.Mode().IsRegular() || !info.Mode().IsRegular() || !os.SameFile(l.info, info) {
-		return scope.Err("permission_denied", "project write lock must remain a regular file")
+		return scope.Err("permission_denied", "write lock must remain a regular file")
 	}
 	return nil
 }
